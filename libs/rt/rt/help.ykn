@@ -1,0 +1,298 @@
+load std.outf: style
+load .bytecode: RtSchema, RtCommand, RtFlag, RtParam
+
+fun pad_right(s: string, total_len: int64) -> string {
+    set res: string = s
+    while res.len() < total_len {
+        rewrite res = res + " "
+    }
+    return res
+}
+
+fun format_section_header(name: string) -> string {
+    return style(name).bold().yellow().render()
+}
+
+fun format_entry_name(name: string) -> string {
+    return style(name).bold().cyan().render()
+}
+
+public fun render_version(ref schema: RtSchema) -> string {
+    if schema.version.len() == 0 {
+        return style(schema.app).bold().render()
+    }
+    return style("${schema.app} ${schema.version}").bold().render()
+}
+
+fun render_flags_section(ref schema: RtSchema, ref cmd: RtCommand) -> string {
+    set res: string = "\n" + format_section_header("FLAGS:") + "\n"
+    set has_h: bool = false
+    set has_v: bool = false
+    set i: int64 = 0
+    while i < cmd.flags.len() {
+        if cmd.flags[i].short_name == "h" || cmd.flags[i].long_name == "help" { rewrite has_h = true }
+        if cmd.flags[i].short_name == "v" || cmd.flags[i].short_name == "V" || cmd.flags[i].long_name == "version" { rewrite has_v = true }
+        rewrite i = i + 1
+    }
+    rewrite i = 0
+    while i < schema.common_flags.len() {
+        if schema.common_flags[i].short_name == "h" || schema.common_flags[i].long_name == "help" { rewrite has_h = true }
+        if schema.common_flags[i].short_name == "v" || schema.common_flags[i].short_name == "V" || schema.common_flags[i].long_name == "version" { rewrite has_v = true }
+        rewrite i = i + 1
+    }
+    if schema.default_flags && !has_h {
+        set h_col: string = pad_right("-h, --help", 22)
+        rewrite res = res + "    " + format_entry_name(h_col) + " Print help information\n"
+    }
+    if schema.default_flags && schema.version.len() > 0 && !has_v {
+        set v_col: string = pad_right("-V, --version", 22)
+        rewrite res = res + "    " + format_entry_name(v_col) + " Print version information\n"
+    }
+
+    set i: int64 = 0
+    while i < cmd.flags.len() {
+        set f: RtFlag = cmd.flags[i]
+        if f.type_code == 1u8 || f.type_code == 5u8 {
+            set col: string = if f.short_name.len() > 0 { "-${f.short_name}, --${f.long_name}" } else { "    --${f.long_name}" }
+            set padded: string = pad_right(col, 22)
+            rewrite res = res + "    " + format_entry_name(padded) + " " + f.about + "\n"
+        }
+        rewrite i = i + 1
+    }
+    if !cmd.is_uncommon {
+        rewrite i = 0
+        while i < schema.common_flags.len() {
+            set cf: RtFlag = schema.common_flags[i]
+            if cf.type_code == 1u8 || cf.type_code == 5u8 {
+                set col: string = if cf.short_name.len() > 0 { "-${cf.short_name}, --${cf.long_name}" } else { "    --${cf.long_name}" }
+                set padded: string = pad_right(col, 22)
+                rewrite res = res + "    " + format_entry_name(padded) + " " + cf.about + "\n"
+            }
+            rewrite i = i + 1
+        }
+    }
+    return res
+}
+
+fun render_options_section(ref schema: RtSchema, ref cmd: RtCommand) -> string {
+    set lines: string = ""
+    set i: int64 = 0
+    while i < cmd.flags.len() {
+        set f: RtFlag = cmd.flags[i]
+        if f.type_code != 1u8 && f.type_code != 5u8 {
+            set hint: string = " <val>"
+            set col: string = if f.short_name.len() > 0 { "-${f.short_name}, --${f.long_name}${hint}" } else { "    --${f.long_name}${hint}" }
+            set padded: string = pad_right(col, 26)
+            set desc: string = f.about
+            if f.has_default && f.default_val.len() > 0 {
+                rewrite desc = desc + if desc.len() > 0 { " " } else { "" } + "[default: ${f.default_val}]"
+            }
+            if !f.is_nullable && !f.has_default && f.type_code != 8u8 && f.type_code != 9u8 && f.type_code != 10u8 {
+                rewrite desc = desc + if desc.len() > 0 { " " } else { "" } + "[required]"
+            }
+            rewrite lines = lines + "    " + format_entry_name(padded) + " " + desc + "\n"
+        }
+        rewrite i = i + 1
+    }
+    if !cmd.is_uncommon {
+        rewrite i = 0
+        while i < schema.common_flags.len() {
+            set cf: RtFlag = schema.common_flags[i]
+            if cf.type_code != 1u8 && cf.type_code != 5u8 {
+                set hint: string = " <val>"
+                set col: string = if cf.short_name.len() > 0 { "-${cf.short_name}, --${cf.long_name}${hint}" } else { "    --${cf.long_name}${hint}" }
+                set padded: string = pad_right(col, 26)
+                set desc: string = cf.about
+                if cf.has_default && cf.default_val.len() > 0 {
+                    rewrite desc = desc + if desc.len() > 0 { " " } else { "" } + "[default: ${cf.default_val}]"
+                }
+                if !cf.is_nullable && !cf.has_default && cf.type_code != 8u8 && cf.type_code != 9u8 && cf.type_code != 10u8 {
+                    rewrite desc = desc + if desc.len() > 0 { " " } else { "" } + "[required]"
+                }
+                rewrite lines = lines + "    " + format_entry_name(padded) + " " + desc + "\n"
+            }
+            rewrite i = i + 1
+        }
+    }
+    if lines.len() > 0 {
+        return "\n" + format_section_header("OPTIONS:") + "\n" + lines
+    }
+    return ""
+}
+
+fun render_args_section(ref cmd: RtCommand) -> string {
+    if cmd.params.len() == 0 {
+        return ""
+    }
+    set res: string = "\n" + format_section_header("ARGS:") + "\n"
+    set i: int64 = 0
+    while i < cmd.params.len() {
+        set p: RtParam = cmd.params[i]
+        set col: string = "<${p.name}>"
+        set padded: string = pad_right(col, 22)
+        set desc: string = p.about
+        if p.has_default && p.default_val.len() > 0 {
+            rewrite desc = desc + if desc.len() > 0 { " " } else { "" } + "[default: ${p.default_val}]"
+        } elif !p.is_variadic && !p.has_default && !p.is_nullable {
+            rewrite desc = desc + if desc.len() > 0 { " " } else { "" } + "[required]"
+        }
+        rewrite res = res + "    " + format_entry_name(padded) + " " + desc + "\n"
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun render_subcommands_section(ref cmd: RtCommand) -> string {
+    if cmd.subcommands.len() == 0 {
+        return ""
+    }
+    set res: string = "\n" + format_section_header("SUBCOMMANDS:") + "\n"
+    set i: int64 = 0
+    while i < cmd.subcommands.len() {
+        set sub: RtCommand = cmd.subcommands[i]
+        set padded: string = pad_right(sub.name, 18)
+        rewrite res = res + "    " + format_entry_name(padded) + " " + sub.about + "\n"
+        rewrite i = i + 1
+    }
+    return res
+}
+
+public fun render_command_help(ref schema: RtSchema, ref cmd: RtCommand) -> string {
+    set ver_suffix: string = if schema.version.len() > 0 { " " + schema.version } else { "" }
+    set full_cmd: string = if cmd.is_root { schema.app } else { schema.app + " " + cmd.name }
+    set title: string = full_cmd + ver_suffix
+    set res: string = style(title).bold().render() + "\n"
+    if schema.author.len() > 0 {
+        rewrite res = res + schema.author + "\n"
+    }
+    if cmd.about.len() > 0 {
+        rewrite res = res + cmd.about + "\n"
+    } elif schema.about.len() > 0 {
+        rewrite res = res + schema.about + "\n"
+    }
+
+    rewrite res = res + "\n" + format_section_header("USAGE:") + "\n"
+    set usage: string = "    " + full_cmd
+    set has_opts: bool = false
+    set i: int64 = 0
+    while i < cmd.flags.len() {
+        if cmd.flags[i].type_code != 1u8 && cmd.flags[i].type_code != 5u8 {
+            rewrite has_opts = true
+        }
+        rewrite i = i + 1
+    }
+    if !cmd.is_uncommon {
+        rewrite i = 0
+        while i < schema.common_flags.len() {
+            if schema.common_flags[i].type_code != 1u8 && schema.common_flags[i].type_code != 5u8 {
+                rewrite has_opts = true
+            }
+            rewrite i = i + 1
+        }
+    }
+    rewrite usage = usage + " [FLAGS]"
+    if has_opts { rewrite usage = usage + " [OPTIONS]" }
+    if cmd.subcommands.len() > 0 { rewrite usage = usage + " [SUBCOMMAND]" }
+    rewrite i = 0
+    while i < cmd.params.len() {
+        set p: RtParam = cmd.params[i]
+        if p.is_variadic {
+            rewrite usage = usage + " [${p.name}...]"
+        } elif p.has_default || p.is_nullable {
+            rewrite usage = usage + " [${p.name}]"
+        } else {
+            rewrite usage = usage + " <${p.name}>"
+        }
+        rewrite i = i + 1
+    }
+    rewrite res = res + usage + "\n"
+
+    rewrite res = res + render_flags_section(ref schema, ref cmd)
+    rewrite res = res + render_options_section(ref schema, ref cmd)
+    rewrite res = res + render_args_section(ref cmd)
+    rewrite res = res + render_subcommands_section(ref cmd)
+    return res
+}
+
+public fun render_app_help(ref schema: RtSchema) -> string {
+    set ver_suffix: string = if schema.version.len() > 0 { " " + schema.version } else { "" }
+    set title: string = schema.app + ver_suffix
+    set res: string = style(title).bold().render() + "\n"
+    if schema.author.len() > 0 {
+        rewrite res = res + schema.author + "\n"
+    }
+    if schema.about.len() > 0 {
+        rewrite res = res + schema.about + "\n"
+    }
+
+    set has_common_opts: bool = false
+    set i: int64 = 0
+    while i < schema.common_flags.len() {
+        if schema.common_flags[i].type_code != 1u8 && schema.common_flags[i].type_code != 5u8 {
+            rewrite has_common_opts = true
+        }
+        rewrite i = i + 1
+    }
+
+    rewrite res = res + "\n" + format_section_header("USAGE:") + "\n"
+    set usage: string = "    " + schema.app + " [FLAGS]"
+    if has_common_opts { rewrite usage = usage + " [OPTIONS]" }
+    if schema.commands.len() > 0 { rewrite usage = usage + " [SUBCOMMAND]" }
+    rewrite res = res + usage + "\n"
+
+    set flags_res: string = "\n" + format_section_header("FLAGS:") + "\n"
+    set h_col: string = pad_right("-h, --help", 22)
+    rewrite flags_res = flags_res + "    " + format_entry_name(h_col) + " Print help information\n"
+    if schema.version.len() > 0 {
+        set v_col: string = pad_right("-V, --version", 22)
+        rewrite flags_res = flags_res + "    " + format_entry_name(v_col) + " Print version information\n"
+    }
+    rewrite i = 0
+    while i < schema.common_flags.len() {
+        set cf: RtFlag = schema.common_flags[i]
+        if cf.type_code == 1u8 || cf.type_code == 5u8 {
+            set col: string = if cf.short_name.len() > 0 { "-${cf.short_name}, --${cf.long_name}" } else { "    --${cf.long_name}" }
+            set padded: string = pad_right(col, 22)
+            rewrite flags_res = flags_res + "    " + format_entry_name(padded) + " " + cf.about + "\n"
+        }
+        rewrite i = i + 1
+    }
+    rewrite res = res + flags_res
+
+    set opt_lines: string = ""
+    rewrite i = 0
+    while i < schema.common_flags.len() {
+        set cf: RtFlag = schema.common_flags[i]
+        if cf.type_code != 1u8 && cf.type_code != 5u8 {
+            set hint: string = " <val>"
+            set col: string = if cf.short_name.len() > 0 { "-${cf.short_name}, --${cf.long_name}${hint}" } else { "    --${cf.long_name}${hint}" }
+            set padded: string = pad_right(col, 26)
+            set desc: string = cf.about
+            if cf.has_default && cf.default_val.len() > 0 {
+                rewrite desc = desc + if desc.len() > 0 { " " } else { "" } + "[default: ${cf.default_val}]"
+            }
+            if !cf.is_nullable && !cf.has_default && cf.type_code != 8u8 && cf.type_code != 9u8 && cf.type_code != 10u8 {
+                rewrite desc = desc + if desc.len() > 0 { " " } else { "" } + "[required]"
+            }
+            rewrite opt_lines = opt_lines + "    " + format_entry_name(padded) + " " + desc + "\n"
+        }
+        rewrite i = i + 1
+    }
+    if opt_lines.len() > 0 {
+        rewrite res = res + "\n" + format_section_header("OPTIONS:") + "\n" + opt_lines
+    }
+
+    if schema.commands.len() > 0 {
+        rewrite res = res + "\n" + format_section_header("SUBCOMMANDS:") + "\n"
+        rewrite i = 0
+        while i < schema.commands.len() {
+            set cmd: RtCommand = schema.commands[i]
+            set padded: string = pad_right(cmd.name, 18)
+            rewrite res = res + "    " + format_entry_name(padded) + " " + cmd.about + "\n"
+            rewrite i = i + 1
+        }
+        set help_pad: string = pad_right("help", 18)
+        rewrite res = res + "    " + format_entry_name(help_pad) + " Print this message or the help of the given subcommand(s)\n"
+    }
+    return res
+}

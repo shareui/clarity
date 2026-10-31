@@ -1,0 +1,170 @@
+public struct AppMeta {
+    app: string
+    version: string
+    author: string
+    about: string
+    config_path: string
+    default_flags: bool
+}
+
+public fun init_app_meta() -> AppMeta {
+    return AppMeta {
+        app: "",
+        version: "",
+        author: "",
+        about: "",
+        config_path: "",
+        default_flags: true
+    }
+}
+
+public struct ValidatorDef {
+    kind: string
+    str_val: string
+    int_min: int64
+    int_max: int64
+    float_min: float64
+    float_max: float64
+    str_list: string[]
+}
+
+public fun init_validator(kind: string) -> ValidatorDef {
+    set empty_strings: string[] = []
+    
+    return ValidatorDef {
+        kind: kind,
+        str_val: "",
+        int_min: 0,
+        int_max: 0,
+        float_min: 0.0,
+        float_max: 0.0,
+        str_list: empty_strings
+    }
+}
+
+public struct FlagDef {
+    long_name: string
+    short_name: string
+    type_name: string
+    is_nullable: bool
+    default_val: string
+    has_default: bool
+    env_var: string
+    config_key: string
+    requires_flag: string
+    conflicts_flag: string
+    error_msg: string
+    about: string
+    enum_variants: string[]
+    validators: ValidatorDef[]
+    slot_id: int64
+}
+
+public fun init_flag(long_name: string, type_name: string) -> FlagDef {
+    set empty_variants: string[] = []
+    set empty_validators: ValidatorDef[] = []
+
+    return FlagDef {
+        long_name: long_name,
+        short_name: "",
+        type_name: type_name,
+        is_nullable: false,
+        default_val: "",
+        has_default: false,
+        env_var: "",
+        config_key: "",
+        requires_flag: "",
+        conflicts_flag: "",
+        error_msg: "",
+        about: "",
+        enum_variants: empty_variants,
+        validators: empty_validators,
+        slot_id: 0
+    }
+}
+
+public struct ParamDef {
+    name: string
+    type_name: string
+    default_val: string
+    has_default: bool
+    is_variadic: bool
+    is_nullable: bool
+    about: string
+    validators: ValidatorDef[]
+    slot_id: int64
+}
+
+public fun init_param(name: string, type_name: string) -> ParamDef {
+    set empty_validators: ValidatorDef[] = []
+
+    return ParamDef {
+        name: name,
+        type_name: type_name,
+        default_val: "",
+        has_default: false,
+        is_variadic: false,
+        is_nullable: false,
+        about: "",
+        validators: empty_validators,
+        slot_id: 0
+    }
+}
+
+public struct GroupDef {
+    name: string
+    is_or: bool
+    is_optional: bool
+    about: string
+    flags: FlagDef[]
+}
+
+public fun init_group(name: string, is_or: bool) -> GroupDef {
+    set empty_flags: FlagDef[] = []
+    
+    return GroupDef {
+        name: name,
+        is_or: is_or,
+        is_optional: false,
+        about: "",
+        flags: empty_flags
+    }
+}
+
+public struct CommandDef {
+    name: string
+    about: string
+    is_root: bool
+    is_uncommon: bool
+    is_config: bool
+    flags: FlagDef[]
+    params: ParamDef[]
+    groups: GroupDef[]
+    subcommands: CommandDef[]
+}
+
+public fun init_command(name: string, is_root: bool = false) -> CommandDef {
+    set empty_flags: FlagDef[] = []
+    set empty_params: ParamDef[] = []
+    set empty_groups: GroupDef[] = []
+    set empty_subcmds: CommandDef[] = []
+    
+    return CommandDef {
+        name: name,
+        about: "",
+        is_root: is_root,
+        is_uncommon: false,
+        is_config: false,
+        flags: empty_flags,
+        params: empty_params,
+        groups: empty_groups,
+        subcommands: empty_subcmds
+    }
+}
+
+public struct ClaritySchema {
+    meta: AppMeta
+    common_flags: FlagDef[]
+    root_command: CommandDef?
+    commands: CommandDef[]
+}

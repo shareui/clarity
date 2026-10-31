@@ -1,0 +1,17 @@
+app "demo"
+version "1.0.0"
+about "Demo CLI application with Clarity"
+
+define build "Build the project" {
+    --release, -r: bool = false "Build in release mode";
+    --output, -o: string = "a.out" "Output file";
+    --verbose, -v: count "Verbosity level";
+    --features, -f: string[] "Features to enable";
+    param target: string = "host" "Target architecture";
+    param note: string? "Optional build note";
+}
+
+define run "Run target binary" {
+    --port, -p: int32 = 8080 "Server port";
+    param file: string = "main.bin" "File to run";
+}

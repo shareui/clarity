@@ -1,0 +1,21 @@
+[package]
+name = "test_app"
+version = "0.1.0"
+entry = "src/main.ykn"
+yukino = ["0.1.0", "+"]
+output = "app"
+includes = ["stdlib"]
+
+[features]
+default = []
+
+[libs.runtime]
+clarity = { path = "../../libs/clarity" }
+clarity_rt = { path = "../../libs/rt" }
+scheme = { path = "../../libs/macro" }
+
+[libs.build]
+
+[libs.static]
+archives = []
+system = []

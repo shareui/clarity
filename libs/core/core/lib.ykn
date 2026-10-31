@@ -1,0 +1,29 @@
+public load .ast: ClaritySchema, CommandDef, FlagDef, ParamDef, GroupDef, ValidatorDef, AppMeta
+public load .errors: ClarityError, clarity_error
+public load .lexer: Lexer, Token
+public load .parser: Parser
+public load .semantic: SemanticValidator
+public load .bytecode: ByteBuffer, compile_schema_hex
+public load .codegen: CodeGenerator
+
+public fun parse_schema(src: string) -> ClaritySchema {
+    set p: Parser = init Parser(src)
+    set schema: ClaritySchema = p.parse_schema()
+    set validator: SemanticValidator = init SemanticValidator()
+    validator.validate(ref schema)
+    return schema
+}
+
+public fun compile_schema_to_bytecode(src: string) -> ByteBuffer {
+    set schema: ClaritySchema = parse_schema(src)
+    set hex: string = compile_schema_hex(ref schema)
+    return init ByteBuffer(hex)
+}
+
+public fun compile_schema_to_code(src: string) -> string {
+    set schema: ClaritySchema = parse_schema(src)
+    set hex: string = compile_schema_hex(ref schema)
+    set bc_buf: ByteBuffer = init ByteBuffer(hex)
+    set gen: CodeGenerator = init CodeGenerator(schema)
+    return gen.generate(ref bc_buf)
+}

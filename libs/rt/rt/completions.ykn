@@ -1,0 +1,81 @@
+load .bytecode: RtSchema, RtCommand, RtFlag
+
+public fun generate_bash(ref schema: RtSchema) -> string {
+    set app: string = schema.app
+    set out: string = "_${app}_completion() {\n"
+    rewrite out = "${out}    local cur prev words cword\n"
+    rewrite out = "${out}    _init_completion || return\n\n"
+
+    set cmds: string = ""
+    set i: int64 = 0
+    while i < schema.commands.len() {
+        set c: RtCommand = schema.commands[i]
+        rewrite cmds = "${cmds} ${c.name}"
+        rewrite i = i + 1
+    }
+
+    set flags: string = "--help -h --version -V"
+    rewrite i = 0
+    while i < schema.common_flags.len() {
+        set f: RtFlag = schema.common_flags[i]
+        rewrite flags = "${flags} --${f.long_name}"
+        if f.short_name.len() > 0 {
+            rewrite flags = "${flags} -${f.short_name}"
+        }
+        rewrite i = i + 1
+    }
+
+    rewrite out = "${out}    local commands=\"${cmds}\"\n"
+    rewrite out = "${out}    local common_flags=\"${flags}\"\n\n"
+    rewrite out = "${out}    if [[ $cword -eq 1 ]]; then\n"
+    rewrite out = "${out}        COMPREPLY=($(compgen -W \"$commands $common_flags\" -- \"$cur\"))\n"
+    rewrite out = "${out}        return 0\n"
+    rewrite out = "${out}    fi\n"
+    rewrite out = "${out}}\n\n"
+    rewrite out = "${out}complete -F _${app}_completion ${app}\n"
+    return out
+}
+
+public fun generate_fish(ref schema: RtSchema) -> string {
+    set app: string = schema.app
+    set out: string = "# Fish completions for ${app}\n\n"
+    set i: int64 = 0
+    while i < schema.commands.len() {
+        set c: RtCommand = schema.commands[i]
+        rewrite out = "${out}complete -c ${app} -n \"__fish_use_subcommand\" -a \"${c.name}\" -d \"${c.about}\"\n"
+        rewrite i = i + 1
+    }
+    rewrite i = 0
+    while i < schema.common_flags.len() {
+        set f: RtFlag = schema.common_flags[i]
+        set line: string = "complete -c ${app} -l ${f.long_name}"
+        if f.short_name.len() > 0 {
+            rewrite line = "${line} -s ${f.short_name}"
+        }
+        if f.about.len() > 0 {
+            rewrite line = "${line} -d \"${f.about}\""
+        }
+        rewrite out = "${out}${line}\n"
+        rewrite i = i + 1
+    }
+    return out
+}
+
+public fun generate_zsh(ref schema: RtSchema) -> string {
+    set app: string = schema.app
+    set out: string = "#compdef ${app}\n\n"
+    rewrite out = "${out}_${app}() {\n"
+    rewrite out = "${out}    local -a commands\n"
+    rewrite out = "${out}    commands=(\n"
+    set i: int64 = 0
+    while i < schema.commands.len() {
+        set c: RtCommand = schema.commands[i]
+        rewrite out = "${out}        '${c.name}:${c.about}'\n"
+        rewrite i = i + 1
+    }
+    rewrite out = "${out}    )\n"
+    rewrite out = "${out}    _describe 'command' commands\n"
+    rewrite out = "${out}}\n\n"
+    rewrite out = "${out}_${app} \"$@\"\n"
+    return out
+}

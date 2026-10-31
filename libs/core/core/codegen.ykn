@@ -1,0 +1,395 @@
+load .ast: ClaritySchema, CommandDef, FlagDef, ParamDef, init_command
+load .bytecode: ByteBuffer
+load std.strings: upper
+
+fun to_pascal(s: string) -> string {
+    if s.len() == 0 { return "" }
+    set res: string = ""
+    set capitalize_next: bool = true
+    set i: int64 = 0
+    while i < s.len() {
+        set ch: string = s[i..i + 1]
+        if ch == "_" || ch == "-" {
+            rewrite capitalize_next = true
+        } elif capitalize_next {
+            set u: string = upper(ch)
+            rewrite res = res + u
+            rewrite capitalize_next = false
+        } else { rewrite res = res + ch }
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun sanitize_field(name: string) -> string {
+    set res: string = ""
+    set i: int64 = 0
+    while i < name.len() {
+        set ch: string = name[i..i + 1]
+        if ch == "-" { rewrite res = res + "_"
+        } else { rewrite res = res + ch }
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun yukino_type(t: string, is_nullable: bool) -> string {
+    set base: string = "string"
+    if t == "bool" {
+        rewrite base = "bool"
+    } elif t == "int" || t == "int64" {
+        rewrite base = "int64"
+    } elif t == "int32" {
+        rewrite base = "int32"
+    } elif t == "float" || t == "float64" {
+        rewrite base = "float64"
+    } elif t == "count" {
+        rewrite base = "uint8"
+    } elif t == "str[]" || t == "string[]" || t == "path[]" {
+        rewrite base = "string[]"
+    } elif t == "int[]" {
+        rewrite base = "int32[]"
+    } else {
+        rewrite base = "string"
+    }
+    if is_nullable {
+        return "${base}?"
+    }
+    return base
+}
+
+fun emit_common_flags_struct(ref schema: ClaritySchema) -> string {
+    if schema.common_flags.len() == 0 { return "" }
+    set s: string = "public struct CommonFlags {\n"
+    set i: int64 = 0
+    while i < schema.common_flags.len() {
+        set f: FlagDef = schema.common_flags[i]
+        set field_name: string = sanitize_field(f.long_name)
+        set ftype: string = yukino_type(f.type_name, f.is_nullable)
+        rewrite s = "${s}    ${field_name}: ${ftype}\n"
+        rewrite i = i + 1
+    }
+    return "${s}}\n\n"
+}
+
+fun emit_command_struct(ref cmd: CommandDef, prefix: string) -> string {
+    set cmd_name: string = prefix + to_pascal(cmd.name)
+    if cmd.is_root { rewrite cmd_name = "Root" }
+    set s: string = "public struct ${cmd_name}Args {\n"
+    set i: int64 = 0
+    while i < cmd.flags.len() {
+        set f: FlagDef = cmd.flags[i]
+        set field_name: string = sanitize_field(f.long_name)
+        set ftype: string = yukino_type(f.type_name, f.is_nullable)
+        rewrite s = "${s}    ${field_name}: ${ftype}\n"
+        rewrite i = i + 1
+    }
+    rewrite i = 0
+    while i < cmd.params.len() {
+        set p: ParamDef = cmd.params[i]
+        set field_name: string = sanitize_field(p.name)
+        set ptype: string = yukino_type(p.type_name, p.is_nullable)
+        rewrite s = "${s}    ${field_name}: ${ptype}\n"
+        rewrite i = i + 1
+    }
+    if cmd.subcommands.len() > 0 {
+        rewrite s = "${s}    sub: ${cmd_name}Subcommand?\n"
+    }
+    rewrite s = "${s}}\n\n"
+    if cmd.subcommands.len() > 0 {
+        set sub_enum: string = "public enum ${cmd_name}Subcommand {\n"
+        rewrite i = 0
+        while i < cmd.subcommands.len() {
+            set sub: CommandDef = cmd.subcommands[i]
+            set sub_name: string = to_pascal(sub.name)
+            rewrite s = s + emit_command_struct(ref sub, cmd_name)
+            rewrite sub_enum = "${sub_enum}    ${sub_name}(args: ${cmd_name}${sub_name}Args),\n"
+            rewrite i = i + 1
+        }
+        rewrite s = s + "${sub_enum}}\n\n"
+    }
+    return s
+}
+
+fun emit_command_enum(ref schema: ClaritySchema) -> string {
+    set s: string = "public enum Command {\n"
+    if schema.root_command != null {
+        set has_common: bool = schema.common_flags.len() > 0
+        if has_common {
+            rewrite s = "${s}    Root(common: CommonFlags, args: RootArgs),\n"
+        } else {
+            rewrite s = "${s}    Root(args: RootArgs),\n"
+        }
+    }
+    set i: int64 = 0
+    while i < schema.commands.len() {
+        set cmd: CommandDef = schema.commands[i]
+        set cname: string = to_pascal(cmd.name)
+        set has_common: bool = !cmd.is_uncommon && schema.common_flags.len() > 0
+        if has_common {
+            rewrite s = "${s}    ${cname}(common: CommonFlags, args: ${cname}Args),\n"
+        } else {
+            rewrite s = "${s}    ${cname}(args: ${cname}Args),\n"
+        }
+        rewrite i = i + 1
+    }
+    return "${s}}\n\n"
+}
+
+fun flag_getter_code(ref f: FlagDef) -> string {
+    if f.type_name == "bool" {
+        return "get_slot_bool(ref vm_res, ${f.slot_id})"
+    }
+    if f.type_name == "count" {
+        return "get_slot_count(ref vm_res, ${f.slot_id})"
+    }
+    if f.type_name == "int32" {
+        set d: string = f.default_val
+        if d.len() == 0 { rewrite d = "0" }
+        return "cast(get_slot_int(ref vm_res, ${f.slot_id}, ${d}), \"int32\")"
+    }
+    if f.type_name == "int" || f.type_name == "int64" {
+        set d: string = f.default_val
+        if d.len() == 0 { rewrite d = "0" }
+        return "get_slot_int(ref vm_res, ${f.slot_id}, ${d})"
+    }
+    if f.type_name == "float" || f.type_name == "float64" {
+        set d: string = f.default_val
+        if d.len() == 0 { rewrite d = "0.0" }
+        return "get_slot_float(ref vm_res, ${f.slot_id}, ${d})"
+    }
+    if f.type_name == "str[]" || f.type_name == "string[]" || f.type_name == "path[]" {
+        return "get_slot_array(ref vm_res, ${f.slot_id})"
+    }
+    if f.type_name == "int[]" {
+        return "get_slot_int_array(ref vm_res, ${f.slot_id})"
+    }
+    if f.is_nullable {
+        return "get_slot_str_nullable(ref vm_res, ${f.slot_id})"
+    }
+    return "get_slot_str(ref vm_res, ${f.slot_id}, \"${f.default_val}\")"
+}
+
+fun param_getter_code(ref p: ParamDef) -> string {
+    if p.is_variadic {
+        return "vm_res.variadic_vals"
+    }
+    if p.type_name == "int32" {
+        set d: string = p.default_val
+        if d.len() == 0 { rewrite d = "0" }
+        if p.is_nullable {
+            return "if has_slot(ref vm_res, ${p.slot_id}) { cast(get_slot_int(ref vm_res, ${p.slot_id}, ${d}), \"int32\") } else { null }"
+        }
+        return "cast(get_slot_int(ref vm_res, ${p.slot_id}, ${d}), \"int32\")"
+    }
+    if p.type_name == "int" || p.type_name == "int64" {
+        set d: string = p.default_val
+        if d.len() == 0 { rewrite d = "0" }
+        if p.is_nullable {
+            return "if has_slot(ref vm_res, ${p.slot_id}) { get_slot_int(ref vm_res, ${p.slot_id}, ${d}) } else { null }"
+        }
+        return "get_slot_int(ref vm_res, ${p.slot_id}, ${d})"
+    }
+    if p.type_name == "float" || p.type_name == "float64" {
+        set d: string = p.default_val
+        if d.len() == 0 { rewrite d = "0.0" }
+        if p.is_nullable {
+            return "if has_slot(ref vm_res, ${p.slot_id}) { get_slot_float(ref vm_res, ${p.slot_id}, ${d}) } else { null }"
+        }
+        return "get_slot_float(ref vm_res, ${p.slot_id}, ${d})"
+    }
+    if p.type_name == "str[]" || p.type_name == "string[]" || p.type_name == "path[]" {
+        return "get_slot_array(ref vm_res, ${p.slot_id})"
+    }
+    if p.is_nullable {
+        return "get_slot_str_nullable(ref vm_res, ${p.slot_id})"
+    }
+    return "get_slot_param(ref vm_res, ${p.slot_id}, \"${p.default_val}\")"
+}
+
+fun emit_make_common_flags(ref schema: ClaritySchema) -> string {
+    if schema.common_flags.len() == 0 { return "" }
+    set s: string = "fun make_common_flags(ref vm_res: VmResult) -> CommonFlags {\n    return CommonFlags {\n"
+    set i: int64 = 0
+    while i < schema.common_flags.len() {
+        set f: FlagDef = schema.common_flags[i]
+        set field_name: string = sanitize_field(f.long_name)
+        set getter: string = flag_getter_code(ref f)
+        rewrite s = "${s}        ${field_name}: ${getter},\n"
+        rewrite i = i + 1
+    }
+    return "${s}    }\n}\n\n"
+}
+
+fun emit_make_command_args(ref cmd: CommandDef, prefix: string) -> string {
+    set cmd_name: string = prefix + to_pascal(cmd.name)
+    if cmd.is_root { rewrite cmd_name = "Root" }
+    set s: string = ""
+    if cmd.subcommands.len() > 0 {
+        set i: int64 = 0
+        while i < cmd.subcommands.len() {
+            rewrite s = s + emit_make_command_args(ref cmd.subcommands[i], cmd_name)
+            rewrite i = i + 1
+        }
+        rewrite s = "${s}fun make_${cmd.name}_subcommand(ref vm_res: VmResult) -> ${cmd_name}Subcommand? {\n"
+        rewrite i = 0
+        while i < cmd.subcommands.len() {
+            set sub: CommandDef = cmd.subcommands[i]
+            set sub_pascal: string = to_pascal(sub.name)
+            rewrite s = "${s}    if vm_res.sub_name == \"${sub.name}\" {\n"
+            rewrite s = "${s}        return ${cmd_name}Subcommand::${sub_pascal}(make_${cmd_name}_${sub.name}_args(ref vm_res))\n"
+            rewrite s = "${s}    }\n"
+            rewrite i = i + 1
+        }
+        rewrite s = "${s}    return null\n}\n\n"
+    }
+
+    set fn_name: string = if prefix.len() > 0 { "${prefix}_${cmd.name}" } else { "${cmd.name}" }
+    rewrite s = "${s}fun make_${fn_name}_args(ref vm_res: VmResult) -> ${cmd_name}Args {\n    return ${cmd_name}Args {\n"
+    set i: int64 = 0
+    while i < cmd.flags.len() {
+        set f: FlagDef = cmd.flags[i]
+        set field_name: string = sanitize_field(f.long_name)
+        set getter: string = flag_getter_code(ref f)
+        rewrite s = "${s}        ${field_name}: ${getter},\n"
+        rewrite i = i + 1
+    }
+    rewrite i = 0
+    while i < cmd.params.len() {
+        set p: ParamDef = cmd.params[i]
+        set field_name: string = sanitize_field(p.name)
+        set getter: string = param_getter_code(ref p)
+        rewrite s = "${s}        ${field_name}: ${getter},\n"
+        rewrite i = i + 1
+    }
+    if cmd.subcommands.len() > 0 {
+        rewrite s = "${s}        sub: make_${cmd.name}_subcommand(ref vm_res),\n"
+    }
+    return "${s}    }\n}\n\n"
+}
+
+fun emit_wrap_command(ref schema: ClaritySchema) -> string {
+    set has_common: bool = schema.common_flags.len() > 0
+    set s: string = "fun wrap_command(ref vm_res: VmResult) -> Command {\n"
+    if schema.commands.len() > 0 {
+        set def_cmd: CommandDef = schema.commands[0]
+        set def_cname: string = to_pascal(def_cmd.name)
+        set def_with_common: bool = !def_cmd.is_uncommon && has_common
+        if def_with_common {
+            rewrite s = "${s}    set res: Command = Command::${def_cname}(make_common_flags(ref vm_res), make_${def_cmd.name}_args(ref vm_res))\n"
+        } else {
+            rewrite s = "${s}    set res: Command = Command::${def_cname}(make_${def_cmd.name}_args(ref vm_res))\n"
+        }
+    }
+    if schema.root_command != null {
+        rewrite s = "${s}    if vm_res.command_name == \"\" || vm_res.command_name == \"${schema.meta.app}\" {\n"
+        if has_common {
+            rewrite s = "${s}        rewrite res = Command::Root(make_common_flags(ref vm_res), make_root_args(ref vm_res))\n"
+        } else {
+            rewrite s = "${s}        rewrite res = Command::Root(make_root_args(ref vm_res))\n"
+        }
+        rewrite s = "${s}    }\n"
+    }
+    set i: int64 = 0
+    while i < schema.commands.len() {
+        set cmd: CommandDef = schema.commands[i]
+        set cname: string = to_pascal(cmd.name)
+        set with_common: bool = !cmd.is_uncommon && has_common
+        rewrite s = "${s}    if vm_res.command_name == \"${cmd.name}\" {\n"
+        if with_common {
+            rewrite s = "${s}        rewrite res = Command::${cname}(make_common_flags(ref vm_res), make_${cmd.name}_args(ref vm_res))\n"
+        } else {
+            rewrite s = "${s}        rewrite res = Command::${cname}(make_${cmd.name}_args(ref vm_res))\n"
+        }
+        rewrite s = "${s}    }\n"
+        rewrite i = i + 1
+    }
+    return "${s}    return res\n}\n\n"
+}
+
+fun emit_config_helpers(ref schema: ClaritySchema) -> string {
+    set has_config_cmd: bool = false
+    set i: int64 = 0
+    while i < schema.commands.len() {
+        if schema.commands[i].is_config {
+            rewrite has_config_cmd = true
+        }
+        rewrite i = i + 1
+    }
+    if !has_config_cmd && schema.meta.config_path.len() == 0 {
+        return ""
+    }
+    set cfg_path: string = schema.meta.config_path
+    set app_name: string = schema.meta.app
+    set s: string = "load std.fs.defaults: config_dir\nload std.fs.paths: path_parent\nload std.fs.dirs: create_dir_all\n\n"
+    rewrite s = "${s}public fun config_path() -> string {\n"
+    if cfg_path.len() > 0 {
+        rewrite s = "${s}    return config_dir() + \"/${cfg_path}\"\n"
+    } else {
+        rewrite s = "${s}    return config_dir() + \"/clarity-cli/${app_name}/config.toml\"\n"
+    }
+    rewrite s = "${s}}\n\npublic fun config_ensure_dir() -> bool {\n    set p: string = config_path()\n    set parent: string = path_parent(p)\n    return create_dir_all(parent)\n}\n\n"
+    return s
+}
+
+fun emit_runtime_bridges(bc_hex: string) -> string {
+    set s: string = "load clarity: run_vm, run_vm_safe, VmResult, get_slot_bool, get_slot_str, get_slot_int, get_slot_float, get_slot_count, get_slot_array, get_slot_int_array, get_slot_str_nullable, get_slot_param, has_slot\n\n"
+    rewrite s = "${s}public static CLBC_DATA: string = \"${bc_hex}\"\n\n"
+    rewrite s = "${s}public fun parse_args(cli_args: string[]) -> Command {\n"
+    rewrite s = "${s}    set vm_res = run_vm(cast(CLBC_DATA, \"bytes\"), cli_args)\n"
+    rewrite s = "${s}    return wrap_command(ref vm_res)\n"
+    rewrite s = "${s}}\n\n"
+    rewrite s = "${s}public fun parse() -> Command {\n"
+    rewrite s = "${s}    return parse_args(args())\n"
+    rewrite s = "${s}}\n\n"
+    rewrite s = "${s}public fun try_parse_args(cli_args: string[]) -> Command? {\n"
+    rewrite s = "${s}    set vm_res: VmResult = run_vm_safe(cast(CLBC_DATA, \"bytes\"), cli_args)\n"
+    rewrite s = "${s}    if !vm_res.success { return null }\n"
+    rewrite s = "${s}    return wrap_command(ref vm_res)\n"
+    rewrite s = "${s}}\n\n"
+    rewrite s = "${s}public fun try_parse() -> Command? {\n"
+    rewrite s = "${s}    return try_parse_args(args())\n"
+    rewrite s = "${s}}\n\n"
+    return s
+}
+
+public fun generate_code(ref schema: ClaritySchema, bc_hex: string) -> string {
+    set res: string = "// generated by clarity\n\n"
+    rewrite res = res + emit_common_flags_struct(ref schema)
+    if schema.root_command != null {
+        set root: CommandDef = schema.root_command ?? init_command("", true)
+        rewrite res = res + emit_command_struct(ref root, "")
+    }
+    set i: int64 = 0
+    while i < schema.commands.len() {
+        rewrite res = res + emit_command_struct(ref schema.commands[i], "")
+        rewrite i = i + 1
+    }
+    rewrite res = res + emit_command_enum(ref schema)
+    rewrite res = res + emit_make_common_flags(ref schema)
+    if schema.root_command != null {
+        set root_cmd: CommandDef = schema.root_command ?? init_command("", true)
+        rewrite res = res + emit_make_command_args(ref root_cmd, "")
+    }
+    rewrite i = 0
+    while i < schema.commands.len() {
+        rewrite res = res + emit_make_command_args(ref schema.commands[i], "")
+        rewrite i = i + 1
+    }
+    rewrite res = res + emit_wrap_command(ref schema)
+    rewrite res = res + emit_config_helpers(ref schema)
+    rewrite res = res + emit_runtime_bridges(bc_hex)
+    return res
+}
+
+public class CodeGenerator {
+    schema: ClaritySchema
+
+    public fun init(schema: ClaritySchema) {
+        rewrite this.schema = schema
+    }
+
+    public fun generate(ref bc_buf: ByteBuffer) -> string {
+        return generate_code(ref this.schema, bc_buf.to_hex_escaped())
+    }
+}

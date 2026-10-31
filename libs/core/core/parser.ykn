@@ -1,0 +1,561 @@
+load .ast: AppMeta, ValidatorDef, FlagDef, ParamDef, GroupDef, CommandDef, ClaritySchema
+load .ast: init_app_meta, init_validator
+load .lexer: Lexer, Token
+load .errors: clarity_error
+
+public class Parser {
+    lexer: Lexer
+    curr: Token
+    peek: Token
+    slot_counter: int64
+
+    public fun init(src: string) {
+        rewrite this.lexer = init Lexer(src)
+        rewrite this.curr = this.lexer.next_token()
+        rewrite this.peek = this.lexer.next_token()
+        rewrite this.slot_counter = 0
+    }
+
+    fun advance() {
+        rewrite this.curr = this.peek
+        rewrite this.peek = this.lexer.next_token()
+    }
+
+    fun match_token(expected_kind: string) -> bool {
+        if this.curr.kind == expected_kind {
+            this.advance()
+            return true
+        }
+        return false
+    }
+
+    fun expect_token(expected_kind: string) -> Token {
+        if this.curr.kind != expected_kind {
+
+            set msg: string = 
+            "expected '${expected_kind}', got '${this.curr.kind}' ('${this.curr.value}') at line ${this.curr.line}:${this.curr.col}"
+
+            panic(clarity_error(msg, 102))
+        }
+        
+        set tok: Token = this.curr
+        this.advance()
+        return tok
+    }
+
+    fun parse_validator(name: string) -> ValidatorDef {
+        set def: ValidatorDef = init_validator(name)
+
+        if name == "exists" || name == "parent_exists" { return def }
+
+        set _p1: Token = this.expect_token("(")
+        if name == "range" {
+            set min_tok: Token = this.curr
+            this.advance()
+        
+            set _c: Token = this.expect_token(",")
+            set max_tok: Token = this.curr
+
+            this.advance()
+            rewrite def.int_min = cast(min_tok.value, "int64")
+            rewrite def.int_max = cast(max_tok.value, "int64")
+
+        } elif name == "pattern" {
+            set tok: Token = this.expect_token("string")
+            rewrite def.str_val = tok.value
+        } 
+
+        elif name == "min_len" || name == "max_len" {
+            set tok: Token = this.curr
+            this.advance()
+
+
+            rewrite def.int_min = cast(tok.value, "int64")
+        } 
+
+        elif name == "one_of" {
+            while this.curr.kind != ")" && this.curr.kind != "eof" {
+                if this.curr.kind == "string" {
+                    def.str_list.push(this.curr.value)
+                    this.advance()
+                }
+                if this.curr.kind == "," {
+                    this.advance()
+                }
+            }
+        }
+        set _p2: Token = this.expect_token(")")
+        return def
+    }
+
+    fun parse_enum_variants() -> string[] {
+        set variants: string[] = []
+        set _b1: Token = this.expect_token("{")
+        while this.curr.kind != "}" && this.curr.kind != "eof" {
+            if this.curr.kind == "ident" {
+                variants.push(this.curr.value)
+                this.advance()
+            }
+            if this.curr.kind == "," {
+                this.advance()
+            }
+        }
+
+        set _b2: Token = this.expect_token("}")
+        return variants
+    }
+
+    fun is_validator_start(name: string) -> bool {
+        return name == "range" 
+            || name == "pattern" 
+            || name == "exists" 
+            || name == "parent_exists" 
+            || name == "min_len" 
+            || name == "max_len" 
+            || name == "one_of"
+    }
+
+    fun parse_flag() -> FlagDef {
+        set long_name: string = this.curr.value
+        this.advance()
+
+        set short_name: string = ""
+
+        if this.curr.kind == "," {
+            this.advance()
+            rewrite short_name = this.curr.value
+            this.advance()
+        }
+
+        if this.curr.kind == ":" {
+            this.advance()
+        }
+
+        set type_name: string = ""
+        set enum_variants: string[] = []
+
+        if this.curr.kind == "ident" && this.curr.value == "enum" {
+            this.advance()
+            rewrite type_name = "enum"
+            rewrite enum_variants = this.parse_enum_variants()
+        } else {
+            rewrite type_name = this.curr.value
+            this.advance()
+            if this.match_token("[") {
+                if this.curr.kind == "]" { this.advance() }
+                rewrite type_name = "${type_name}[]"
+            }
+        }
+        
+        set is_nullable: bool = false
+        if this.match_token("?") {
+            rewrite is_nullable = true
+        }
+
+        set validators: ValidatorDef[] = []
+        while this.curr.kind == "ident" && this.is_validator_start(this.curr.value) {
+            set val_name: string = this.curr.value
+            this.advance()
+            validators.push(this.parse_validator(val_name))
+        }
+
+        set has_default: bool = false
+        set default_val: string = ""
+        if type_name == "bool" && !is_nullable {
+            rewrite has_default = true
+            rewrite default_val = "false"
+        } elif type_name == "count" && !is_nullable {
+            rewrite has_default = true
+            rewrite default_val = "0"
+        }
+        if this.match_token("=") {
+            rewrite has_default = true
+            rewrite default_val = this.curr.value
+            this.advance()
+        }
+
+        set env_var: string = ""
+        set config_key: string = ""
+        set requires_flag: string = ""
+        set conflicts_flag: string = ""
+        set error_msg: string = ""
+        set about: string = ""
+
+        while this.curr.kind != ";" && this.curr.kind != "}" && this.curr.kind != "eof" {
+            if this.curr.kind == "ident" && this.curr.value == "env" {
+                this.advance()
+                if this.curr.kind == "(" { this.advance() }
+                rewrite env_var = this.curr.value
+                this.advance()
+                if this.curr.kind == ")" { this.advance() }
+            } elif this.curr.kind == "ident" && this.curr.value == "config" {
+                this.advance()
+                if this.curr.kind == "(" { this.advance() }
+                rewrite config_key = this.curr.value
+                this.advance()
+                if this.curr.kind == ")" { this.advance() }
+            } elif this.curr.kind == "ident" && this.curr.value == "requires" {
+                this.advance()
+                rewrite requires_flag = this.curr.value
+                this.advance()
+            } elif this.curr.kind == "ident" && this.curr.value == "conflicts" {
+                this.advance()
+                rewrite conflicts_flag = this.curr.value
+                this.advance()
+            } elif this.curr.kind == "ident" && this.curr.value == "error" {
+                this.advance()
+                rewrite error_msg = this.curr.value
+                this.advance()
+            } elif this.curr.kind == "string" {
+                rewrite about = this.curr.value
+                this.advance()
+            } elif this.is_validator_start(this.curr.value) {
+                set val_name2: string = this.curr.value
+                this.advance()
+                validators.push(this.parse_validator(val_name2))
+            } else {
+                break
+            }
+        }
+        if this.curr.kind == ";" {
+            this.advance()
+        }
+
+        return FlagDef {
+            long_name: long_name,
+            short_name: short_name,
+            type_name: type_name,
+            is_nullable: is_nullable,
+            default_val: default_val,
+            has_default: has_default,
+            env_var: env_var,
+            config_key: config_key,
+            requires_flag: requires_flag,
+            conflicts_flag: conflicts_flag,
+            error_msg: error_msg,
+            about: about,
+            enum_variants: enum_variants,
+            validators: validators,
+            slot_id: 0
+        }
+    }
+
+    fun parse_param() -> ParamDef {
+        if this.curr.kind == "ident" && this.curr.value == "param" {
+            this.advance()
+        }
+        set name: string = this.curr.value
+        this.advance()
+        if this.curr.kind == ":" {
+            this.advance()
+        }
+        set type_name: string = this.curr.value
+        this.advance()
+        set is_nullable: bool = false
+        if this.match_token("?") {
+            rewrite is_nullable = true
+        }
+        set is_variadic: bool = false
+        if this.match_token("[") {
+            if this.curr.kind == "]" { this.advance() }
+            rewrite type_name = "${type_name}[]"
+            rewrite is_variadic = true
+        }
+        set validators: ValidatorDef[] = []
+        while this.curr.kind == "ident" && this.is_validator_start(this.curr.value) {
+            set val_name: string = this.curr.value
+            this.advance()
+            validators.push(this.parse_validator(val_name))
+        }
+        set has_default: bool = false
+        set default_val: string = ""
+        if this.match_token("=") {
+            rewrite has_default = true
+            rewrite default_val = this.curr.value
+            this.advance()
+        }
+        set about: string = ""
+        if this.curr.kind == "string" {
+            rewrite about = this.curr.value
+            this.advance()
+        }
+        if this.curr.kind == ";" {
+            this.advance()
+        }
+        
+        return ParamDef {
+            name: name,
+            type_name: type_name,
+            default_val: default_val,
+            has_default: has_default,
+            is_variadic: is_variadic,
+            is_nullable: is_nullable,
+            about: about,
+            validators: validators,
+            slot_id: 0
+        }
+    }
+
+    fun parse_group() -> GroupDef {
+        set is_or: bool = this.curr.value == "or"
+        this.advance()
+        set name: string = this.curr.value
+        this.advance()
+        set is_optional: bool = false
+        if this.match_token("?") {
+            rewrite is_optional = true
+        }
+        set about: string = ""
+        if this.curr.kind == "string" {
+            rewrite about = this.curr.value
+            this.advance()
+        }
+        if this.curr.kind == "{" {
+            this.advance()
+        }
+        set flags: FlagDef[] = []
+        while this.curr.kind != "}" && this.curr.kind != "eof" {
+            if this.curr.kind == "flag_long" {
+                set f: FlagDef = this.parse_flag()
+                flags.push(f)
+            } 
+            else { this.advance() }
+        }
+        if this.curr.kind == "}" { this.advance() }
+        return GroupDef {
+            name: name,
+            is_or: is_or,
+            is_optional: is_optional,
+            about: about,
+            flags: flags
+        }
+    }
+
+    public fun parse_command() -> CommandDef {
+        set is_uncommon: bool = false
+        set is_config: bool = false
+
+        while this.curr.kind == "ident" && (this.curr.value == "uncommon" || this.curr.value == "config") {
+            if this.curr.value == "uncommon" { rewrite is_uncommon = true } 
+            else { rewrite is_config = true }
+            this.advance()
+        }
+        
+        if this.curr.kind == "ident" && this.curr.value == "define" {
+            this.advance()
+        }
+        
+        set name: string = ""
+        set about: string = ""
+        set is_root: bool = false
+
+        if this.curr.kind == "ident" {
+            rewrite name = this.curr.value
+            this.advance()
+            if this.curr.kind == "string" {
+                rewrite about = this.curr.value
+                this.advance()
+            }
+        } elif this.curr.kind == "string" {
+            rewrite about = this.curr.value
+            this.advance()
+        } elif this.curr.kind == "{" {
+            rewrite is_root = true
+        }
+
+        set flags: FlagDef[] = []
+        set params: ParamDef[] = []
+        set groups: GroupDef[] = []
+        set subcommands: CommandDef[] = []
+
+        if this.curr.kind == "{" {
+            this.advance()
+        }
+
+        while this.curr.kind != "}" && this.curr.kind != "eof" { // `
+            if this.curr.kind == "flag_long" {
+                set f: FlagDef = this.parse_flag()
+                flags.push(f)
+            } elif this.curr.kind == "ident" && this.curr.value == "param" {
+                set p: ParamDef = this.parse_param()
+                params.push(p)
+            } elif this.curr.kind == "ident" && (this.curr.value == "or" || this.curr.value == "and") {
+                set g: GroupDef = this.parse_group()
+                groups.push(g)
+            } elif this.curr.kind == "ident" && (this.curr.value == "define" || this.curr.value == "uncommon" || this.curr.value == "config") {
+                set sub: CommandDef = this.parse_command()
+                subcommands.push(sub)
+            } 
+
+            else { this.advance() }
+
+        } // `
+        
+        if this.curr.kind == "}" { this.advance() }
+
+        return CommandDef {
+            name: name,
+            about: about,
+            is_root: is_root,
+            is_uncommon: is_uncommon,
+            is_config: is_config,
+            flags: flags,
+            params: params,
+            groups: groups,
+            subcommands: subcommands
+        }
+    }
+
+    fun parse_common_block() -> FlagDef[] {
+        set flags: FlagDef[] = []
+        if this.curr.kind == "ident" && this.curr.value == "define" { this.advance() }
+        if this.curr.kind == "*" { this.advance() }
+        if this.curr.kind == "{" { this.advance() }
+        
+        while this.curr.kind != "}" && this.curr.kind != "eof" {
+            if this.curr.kind == "flag_long" {
+                set f: FlagDef = this.parse_flag()
+                flags.push(f)
+            } else {
+                this.advance()
+            }
+        }
+
+        if this.curr.kind == "}" { this.advance() }
+
+        return flags
+    }
+
+    fun assign_cmd_slots(ref cmd: CommandDef) {
+        set i: int64 = 0
+        while i < cmd.flags.len() {
+            rewrite cmd.flags[i].slot_id = this.slot_counter
+            rewrite this.slot_counter = this.slot_counter + 1
+            rewrite i = i + 1
+        }
+        rewrite i = 0
+        while i < cmd.params.len() {
+            rewrite cmd.params[i].slot_id = this.slot_counter
+            rewrite this.slot_counter = this.slot_counter + 1
+            rewrite i = i + 1
+        }
+        rewrite i = 0
+        while i < cmd.groups.len() {
+            set j: int64 = 0
+            while j < cmd.groups[i].flags.len() {
+                rewrite cmd.groups[i].flags[j].slot_id = this.slot_counter
+                rewrite this.slot_counter = this.slot_counter + 1
+                rewrite j = j + 1
+            }
+            rewrite i = i + 1
+        }
+        rewrite i = 0
+        while i < cmd.subcommands.len() {
+            this.assign_cmd_slots(ref cmd.subcommands[i])
+            rewrite i = i + 1
+        }
+    }
+
+    fun assign_all_slots(ref schema: ClaritySchema) {
+        rewrite this.slot_counter = 0
+        set i: int64 = 0
+        while i < schema.common_flags.len() {
+            rewrite schema.common_flags[i].slot_id = this.slot_counter
+            rewrite this.slot_counter = this.slot_counter + 1
+            rewrite i = i + 1
+        }
+        if schema.root_command != null {
+            set root: CommandDef = schema.root_command ?? init_command("", true)
+            this.assign_cmd_slots(ref root)
+            rewrite schema.root_command = root
+        }
+        rewrite i = 0
+        while i < schema.commands.len() {
+            this.assign_cmd_slots(ref schema.commands[i])
+            rewrite i = i + 1
+        }
+    }
+
+    public fun parse_schema() -> ClaritySchema {
+        set app_name: string = ""
+        set ver_str: string = ""
+        set author_str: string = ""
+        set about_str: string = ""
+        set config_str: string = ""
+        set default_flags: bool = true
+        set common_flags: FlagDef[] = []
+        set commands: CommandDef[] = []
+        set root_command: CommandDef? = null
+
+        while this.curr.kind != "eof" {
+            if this.curr.kind == "ident" && this.curr.value == "app" {
+                this.advance()
+                if this.curr.kind == "string" {
+                    rewrite app_name = this.curr.value
+                    this.advance()
+                }
+            } elif this.curr.kind == "ident" && this.curr.value == "version" {
+                this.advance()
+                if this.curr.kind == "string" {
+                    rewrite ver_str = this.curr.value
+                    this.advance()
+                }
+            } elif this.curr.kind == "ident" && this.curr.value == "author" {
+                this.advance()
+                if this.curr.kind == "string" {
+                    rewrite author_str = this.curr.value
+                    this.advance()
+                }
+            } elif this.curr.kind == "ident" && this.curr.value == "about" {
+                this.advance()
+                if this.curr.kind == "string" {
+                    rewrite about_str = this.curr.value
+                    this.advance()
+                }
+            } elif this.curr.kind == "ident" && this.curr.value == "default_flags" {
+                this.advance()
+                if this.curr.kind == "ident" && this.curr.value == "false" {
+                    rewrite default_flags = false
+                    this.advance()
+                } elif this.curr.kind == "ident" && this.curr.value == "true" {
+                    rewrite default_flags = true
+                    this.advance()
+                }
+            } elif this.curr.kind == "ident" && this.curr.value == "config" {
+                if this.peek.kind == "string" {
+                    this.advance()
+                    rewrite config_str = this.curr.value
+                    this.advance()
+                } else {
+                    set cmd: CommandDef = this.parse_command()
+                    commands.push(cmd)
+                }
+            } elif this.curr.kind == "ident" && this.curr.value == "define" && this.peek.kind == "*" {
+                rewrite common_flags = this.parse_common_block()
+            } elif this.curr.kind == "ident" && (this.curr.value == "define" || this.curr.value == "uncommon") {
+                set cmd: CommandDef = this.parse_command()
+                if cmd.is_root { rewrite root_command = cmd } else { commands.push(cmd) }
+            } else {
+                this.advance()
+            }
+        }
+
+        set meta: AppMeta = AppMeta {
+            app: app_name,
+            version: ver_str,
+            author: author_str,
+            about: about_str,
+            config_path: config_str,
+            default_flags: default_flags
+        }
+
+        set schema: ClaritySchema = ClaritySchema {
+            meta: meta,
+            common_flags: common_flags,
+            root_command: root_command,
+            commands: commands
+        }
+        this.assign_all_slots(ref schema)
+        return schema
+    }
+}

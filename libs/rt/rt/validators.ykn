@@ -1,0 +1,69 @@
+load std.regex: is_match
+load std.fs: path_exists, path_parent
+load .errors: clarity_rt_error
+
+fun format_msg(template: string, flag_name: string, val: string, fallback: string) -> string {
+    if template.len() == 0 { return fallback }
+    set res: string = template
+    return res
+}
+
+public fun validate_range_int(val: int64, min: int64, max: int64, flag_name: string, custom_err: string) {
+    if val < min || val > max {
+        set default_msg: string = "flag '--${flag_name}' value ${val} out of range [${min}, ${max}]"
+        panic(clarity_rt_error(format_msg(custom_err, flag_name, "${val}", default_msg), 101))
+    }
+}
+
+public fun validate_pattern(val: string, pattern: string, flag_name: string, custom_err: string) {
+    if !is_match(pattern, val) {
+        set default_msg: string = "flag '--${flag_name}' value '${val}' does not match pattern '${pattern}'"
+        panic(clarity_rt_error(format_msg(custom_err, flag_name, val, default_msg), 102))
+    }
+}
+
+public fun validate_exists(path: string, flag_name: string, custom_err: string) {
+    if !path_exists(path) {
+        set default_msg: string = "path '${path}' for flag '--${flag_name}' does not exist"
+        panic(clarity_rt_error(format_msg(custom_err, flag_name, path, default_msg), 103))
+    }
+}
+
+public fun validate_parent_exists(path: string, flag_name: string, custom_err: string) {
+    set parent: string = path_parent(path)
+    if parent.len() > 0 && !path_exists(parent) {
+        set default_msg: string = "parent directory '${parent}' for flag '--${flag_name}' does not exist"
+        panic(clarity_rt_error(format_msg(custom_err, flag_name, path, default_msg), 104))
+    }
+}
+
+public fun validate_min_len(len: int64, min_len: int64, flag_name: string, custom_err: string) {
+    if len < min_len {
+        set default_msg: string = "length ${len} for flag '--${flag_name}' is less than minimum ${min_len}"
+        panic(clarity_rt_error(format_msg(custom_err, flag_name, "${len}", default_msg), 105))
+    }
+}
+
+public fun validate_max_len(len: int64, max_len: int64, flag_name: string, custom_err: string) {
+    if len > max_len {
+        set default_msg: string = "length ${len} for flag '--${flag_name}' exceeds maximum ${max_len}"
+        panic(clarity_rt_error(format_msg(custom_err, flag_name, "${len}", default_msg), 106))
+    }
+}
+
+public fun validate_one_of(val: string, variants: string[], flag_name: string, custom_err: string) {
+    set found: bool = false
+    set i: int64 = 0
+    set count: int64 = variants.len()
+    while i < count {
+        if variants[i] == val {
+            rewrite found = true
+            break
+        }
+        rewrite i = i + 1
+    }
+    if !found {
+        set default_msg: string = "invalid value '${val}' for flag '--${flag_name}', expected one of allowed variants"
+        panic(clarity_rt_error(format_msg(custom_err, flag_name, val, default_msg), 107))
+    }
+}

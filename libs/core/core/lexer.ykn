@@ -1,0 +1,177 @@
+load .errors: clarity_error
+
+public struct Token {
+    kind: string
+    value: string
+    line: int64
+    col: int64
+}
+
+public class Lexer {
+    src: string
+    pos: int64
+    len: int64
+    line: int64
+    col: int64
+
+    public fun init(src: string) {
+        rewrite this.src = src
+        rewrite this.pos = 0
+        rewrite this.len = src.len()
+        rewrite this.line = 1
+        rewrite this.col = 1
+    }
+
+    fun peek_char() -> string {
+        if this.pos >= this.len { return "" }
+        return this.src[this.pos..this.pos + 1]
+    }
+
+    fun next_char() -> string {
+        if this.pos >= this.len { return "" }
+        set ch: string = this.src[this.pos..this.pos + 1]
+        rewrite this.pos = this.pos + 1
+        if ch == "\n" {
+            rewrite this.line = this.line + 1
+            rewrite this.col = 1
+        } else {
+            rewrite this.col = this.col + 1
+        }
+        return ch
+    }
+
+    fun skip_whitespace_and_comments() {
+        while this.pos < this.len {
+            set ch: string = this.peek_char()
+            if ch == " " || ch == "\t" || ch == "\r" || ch == "\n" {
+                set _: string = this.next_char()
+            } elif ch == "/" && this.pos + 1 < this.len && this.src[this.pos + 1..this.pos + 2] == "/" {
+                while this.pos < this.len && this.peek_char() != "\n" {
+                    set _: string = this.next_char()
+                }
+            } else { break }
+        }
+    }
+
+    fun read_string() -> Token {
+        set start_line: int64 = this.line
+        set start_col: int64 = this.col
+        set _: string = this.next_char()
+        set start_pos: int64 = this.pos
+
+        while this.pos < this.len {
+            set ch: string = this.peek_char()
+            if ch == "\"" {
+                set val: string = this.src[start_pos..this.pos]
+                set _close: string = this.next_char()
+                return Token { kind: "string", value: val, line: start_line, col: start_col }
+            }
+            if ch == "\\" {
+                set _esc: string = this.next_char()
+            }
+            set _adv: string = this.next_char()
+        }
+        panic(clarity_error("unterminated string literal at line ${start_line}", 101))
+    }
+
+    fun is_ident_start(ch: string) -> bool {
+        return (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || ch == "_"
+    }
+
+    fun is_ident_part(ch: string) -> bool {
+        return this.is_ident_start(ch) || (ch >= "0" && ch <= "9") || ch == "-" || ch == "."
+    }
+
+    fun is_digit(ch: string) -> bool {
+        return ch >= "0" && ch <= "9"
+    }
+
+    fun read_number() -> Token {
+        set start_line: int64 = this.line
+        set start_col: int64 = this.col
+        set start_pos: int64 = this.pos
+
+        if this.peek_char() == "-" {
+            set _: string = this.next_char()
+        }
+        while this.pos < this.len && (this.is_digit(this.peek_char()) || this.peek_char() == ".") {
+            set _: string = this.next_char()
+        }
+        set val: string = this.src[start_pos..this.pos]
+        return Token { kind: "number", value: val, line: start_line, col: start_col }
+    }
+
+    fun read_flag_or_number() -> Token {
+        set start_line: int64 = this.line
+        set start_col: int64 = this.col
+
+        if this.pos + 1 < this.len && this.src[this.pos + 1..this.pos + 2] == "-" {
+            set _1: string = this.next_char()
+            set _2: string = this.next_char()
+            set start_pos: int64 = this.pos
+            while this.pos < this.len && this.is_ident_part(this.peek_char()) {
+                set _: string = this.next_char()
+            }
+            set name: string = this.src[start_pos..this.pos]
+            return Token { kind: "flag_long", value: name, line: start_line, col: start_col }
+        }
+
+        if this.pos + 1 < this.len && this.is_digit(this.src[this.pos + 1..this.pos + 2]) {
+            return this.read_number()
+        }
+
+        set _3: string = this.next_char()
+        set start_s_pos: int64 = this.pos
+        while this.pos < this.len && this.is_ident_part(this.peek_char()) {
+            set _: string = this.next_char()
+        }
+
+        set short_name: string = this.src[start_s_pos..this.pos]
+
+        return Token { kind: "flag_short", value: short_name, line: start_line, col: start_col }
+    }
+
+    fun read_ident() -> Token {
+        set start_line: int64 = this.line
+        set start_col: int64 = this.col
+        set start_pos: int64 = this.pos
+
+        while this.pos < this.len && this.is_ident_part(this.peek_char()) {
+            set _: string = this.next_char()
+        }
+
+        set val: string = this.src[start_pos..this.pos]
+        return Token { kind: "ident", value: val, line: start_line, col: start_col }
+    }
+
+    public fun next_token() -> Token {
+        this.skip_whitespace_and_comments()
+        if this.pos >= this.len {
+            return Token { 
+                kind: "eof", 
+                value: "", 
+                line: this.line, 
+                col: this.col 
+            }
+        }
+
+        set ch: string = this.peek_char()
+
+        // string
+        if ch == "\"" { return this.read_string() }
+
+        // flag or neg int
+        if ch == "-" { return this.read_flag_or_number() }
+        
+        if this.is_digit(ch) { return this.read_number() }
+        if this.is_ident_start(ch) { return this.read_ident() }
+
+        set cur_line: int64 = this.line
+        set cur_col: int64 = this.col
+        set cur_pos: int64 = this.pos
+        set _: string = this.next_char()
+        set cur_ch: string = this.src[cur_pos..this.pos]
+
+        return Token { kind: cur_ch, value: cur_ch, line: cur_line, col: cur_col }
+    }
+}

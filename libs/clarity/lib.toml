@@ -1,0 +1,27 @@
+[lib]
+name = "clarity"
+version = "0.1.0"
+entry = "clarity/lib.ykn"
+yukino = ["0.1.0", "+"] # [min, max]
+output = "static"
+includes = ["stdlib"]
+
+[test]
+threads = "auto"
+timeout_ms = 10000
+capture_output = true
+fail_fast = false
+tests_dir = "tests"
+
+[features]
+default = []
+
+[libs.runtime]
+clarity_rt = { path = "../rt" }
+# example = { link = "https://.../lib.tar.zst" }
+
+[libs.build]
+
+[libs.static]
+archives = []
+system = []

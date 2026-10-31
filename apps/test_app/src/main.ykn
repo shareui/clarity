@@ -1,0 +1,30 @@
+load std.io: println
+load clarity: *
+
+#[clarity::scheme("cli.cty")]
+fun clarity_init() { space }
+
+fun main() {
+    set cmd = parse()
+    switch cmd {
+        Command::Build(build_args) -> {
+            println("Command: build")
+            println("Release: " + if build_args.release { "true" } else { "false" })
+            println("Output: " + build_args.output)
+            println("Verbose: " + cast(build_args.verbose, "string"))
+            println("Features count: " + cast(build_args.features.len(), "string"))
+            set i: int64 = 0
+            while i < build_args.features.len() {
+                println("Feature " + cast(i, "string") + ": " + build_args.features[i])
+                rewrite i = i + 1
+            }
+            println("Target: " + build_args.target)
+            println("Note: " + if build_args.note != null { build_args.note ?? "" } else { "none" })
+        }
+        Command::Run(run_args) -> {
+            println("Command: run")
+            println("Port: " + cast(run_args.port, "string"))
+            println("File: " + run_args.file)
+        }
+    }
+}

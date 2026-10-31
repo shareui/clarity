@@ -1,0 +1,1062 @@
+load std.io: println, flush
+load std.env: get_env
+load std.strings: index_of
+load .bytecode: BytecodeReader, RtSchema, RtCommand, RtFlag, RtParam, RtValidator, RtGroup
+load .help: render_command_help, render_app_help, render_version
+load .suggest: print_error_unknown_subcommand, print_error_unexpected_arg, print_error_missing_param, print_error_missing_flag, print_error_missing_value, print_error_conflict, print_error_requires
+load .validators: validate_range_int, validate_pattern, validate_exists, validate_parent_exists, validate_min_len, validate_max_len, validate_one_of
+load .completions: generate_bash, generate_zsh, generate_fish
+load .config.store: Config
+
+fun collect_subcommand_names(ref schema: RtSchema) -> string[] {
+    set res: string[] = []
+    set i: int64 = 0
+    while i < schema.commands.len() {
+        res.push(schema.commands[i].name.cp())
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun collect_flag_candidates(ref schema: RtSchema, ref cmd: RtCommand) -> string[] {
+    set res: string[] = []
+    if schema.default_flags {
+        res.push("--help")
+        res.push("-h")
+        if schema.version.len() > 0 {
+            res.push("--version")
+            res.push("-V")
+            res.push("-v")
+        }
+    }
+    set i: int64 = 0
+    while i < cmd.flags.len() {
+        set f: RtFlag = cmd.flags[i]
+        res.push("--" + f.long_name)
+        if f.short_name.len() > 0 {
+            res.push("-" + f.short_name)
+        }
+        rewrite i = i + 1
+    }
+    if !cmd.is_uncommon {
+        rewrite i = 0
+        while i < schema.common_flags.len() {
+            set cf: RtFlag = schema.common_flags[i]
+            res.push("--" + cf.long_name)
+            if cf.short_name.len() > 0 {
+                res.push("-" + cf.short_name)
+            }
+            rewrite i = i + 1
+        }
+    }
+    return res
+}
+
+fun init_empty_command() -> RtCommand {
+    return RtCommand {
+        name: "",
+        about: "",
+        is_root: false,
+        is_uncommon: false,
+        is_config: false,
+        flags: [],
+        params: [],
+        groups: [],
+        subcommands: [],
+    }
+}
+
+public struct VmResult {
+    success: bool
+    command_name: string
+    sub_name: string
+    slots: string[]
+    array_slots: int64[]
+    array_values: string[]
+    array_count: int64
+    variadic_vals: string[]
+    keys: string[]
+    values: string[]
+}
+
+public fun init_vm_result() -> VmResult {
+    set s: string[] = []
+    set i: int64 = 0
+    while i < 128 {
+        s.push("")
+        rewrite i = i + 1
+    }
+    set arr_s: int64[] = []
+    set arr_vals: string[] = []
+    rewrite i = 0
+    while i < 64 {
+        arr_s.push(-1)
+        arr_vals.push("")
+        rewrite i = i + 1
+    }
+    return VmResult {
+        success: true,
+        command_name: "",
+        sub_name: "",
+        slots: s,
+        array_slots: arr_s,
+        array_values: arr_vals,
+        array_count: 0,
+        variadic_vals: [],
+        keys: [],
+        values: [],
+    }
+}
+
+public fun ensure_slot(ref ~res: VmResult, slot_id: int64) {
+    while res.slots.len() <= slot_id {
+        res.slots.push("")
+    }
+}
+
+public fun ensure_array_slot(ref ~res: VmResult, slot_id: int64) {
+    space
+}
+
+public fun set_slot(ref ~res: VmResult, slot_id: int64, val: string) {
+    if slot_id >= 0 && slot_id < res.slots.len() {
+        rewrite res.slots[slot_id] = val
+    }
+}
+
+public fun push_array_slot(ref ~res: VmResult, slot_id: int64, val: string) {
+    if res.array_count < res.array_slots.len() {
+        rewrite res.array_slots[res.array_count] = slot_id
+        rewrite res.array_values[res.array_count] = val
+        rewrite res.array_count = res.array_count + 1
+    }
+}
+
+public fun has_slot(ref res: VmResult, slot_id: int64) -> bool {
+    if slot_id >= 0 && slot_id < res.slots.len() {
+        return res.slots[slot_id].len() > 0
+    }
+    return false
+}
+
+public fun get_slot_str(ref res: VmResult, slot_id: int64, fallback: string) -> string {
+    if slot_id >= 0 && slot_id < res.slots.len() {
+        set s: string = res.slots[slot_id]
+        if s.len() > 0 { return s }
+    }
+    return fallback
+}
+
+public fun get_slot_str_nullable(ref res: VmResult, slot_id: int64) -> string? {
+    if slot_id >= 0 && slot_id < res.slots.len() {
+        set s: string = res.slots[slot_id]
+        if s.len() > 0 { return s }
+    }
+    return null
+}
+
+public fun get_slot_bool(ref res: VmResult, slot_id: int64) -> bool {
+    if slot_id >= 0 && slot_id < res.slots.len() {
+        set val: string = res.slots[slot_id]
+        return val == "1" || val == "true"
+    }
+    return false
+}
+
+public fun get_slot_int(ref res: VmResult, slot_id: int64, fallback: int64) -> int64 {
+    if slot_id >= 0 && slot_id < res.slots.len() {
+        set s: string = res.slots[slot_id]
+        if s.len() > 0 {
+            set out_val: int64 = fallback
+            sus { rewrite out_val = cast(s, "int64") } catch { rewrite out_val = fallback }
+            return out_val
+        }
+    }
+    return fallback
+}
+
+public fun get_slot_float(ref res: VmResult, slot_id: int64, fallback: float64) -> float64 {
+    if slot_id >= 0 && slot_id < res.slots.len() {
+        set s: string = res.slots[slot_id]
+        if s.len() > 0 {
+            set out_val: float64 = fallback
+            sus { rewrite out_val = cast(s, "float64") } catch { rewrite out_val = fallback }
+            return out_val
+        }
+    }
+    return fallback
+}
+
+public fun get_slot_count(ref res: VmResult, slot_id: int64) -> uint8 {
+    set n: int64 = get_slot_int(ref res, slot_id, 0)
+    return cast(n & 255, "uint8")
+}
+
+public fun get_slot_array(ref res: VmResult, slot_id: int64) -> string[] {
+    set out_list: string[] = []
+    set k: int64 = 0
+    while k < res.array_count {
+        if res.array_slots[k] == slot_id {
+            set raw: string = res.array_values[k]
+            if raw.len() > 0 {
+                set cur: string = ""
+                set i: int64 = 0
+                while i < raw.len() {
+                    set ch: string = raw[i..i + 1]
+                    if ch == "," {
+                        if cur.len() > 0 {
+                            out_list.push(cur)
+                        }
+                        rewrite cur = ""
+                    } else {
+                        rewrite cur = cur + ch
+                    }
+                    rewrite i = i + 1
+                }
+                if cur.len() > 0 {
+                    out_list.push(cur)
+                }
+            }
+        }
+        rewrite k = k + 1
+    }
+    return out_list
+}
+
+public fun get_slot_int_array(ref res: VmResult, slot_id: int64) -> int32[] {
+    set out_arr: int32[] = []
+    set k: int64 = 0
+    while k < res.array_count {
+        if res.array_slots[k] == slot_id {
+            set raw: string = res.array_values[k]
+            if raw.len() > 0 {
+                set cur: string = ""
+                set i: int64 = 0
+                while i < raw.len() {
+                    set ch: string = raw[i..i + 1]
+                    if ch == "," {
+                        if cur.len() > 0 {
+                            set val: int32 = 0
+                            sus { rewrite val = cast(cur, "int32") } catch { space }
+                            out_arr.push(val)
+                        }
+                        rewrite cur = ""
+                    } else {
+                        rewrite cur = cur + ch
+                    }
+                    rewrite i = i + 1
+                }
+                if cur.len() > 0 {
+                    set val: int32 = 0
+                    sus { rewrite val = cast(cur, "int32") } catch { space }
+                    out_arr.push(val)
+                }
+            }
+        }
+        rewrite k = k + 1
+    }
+    return out_arr
+}
+
+public fun get_slot_param(ref res: VmResult, slot_id: int64, fallback: string) -> string {
+    return get_slot_str(ref res, slot_id, fallback)
+}
+
+public fun set_flag(ref ~res: VmResult, name: string, val: string) {
+    set i: int64 = 0
+    set count: int64 = res.keys.len()
+    while i < count {
+        if res.keys[i] == name {
+            rewrite res.values[i] = val
+            return
+        }
+        rewrite i = i + 1
+    }
+    res.keys.push(name)
+    res.values.push(val)
+}
+
+public fun get_str(ref res: VmResult, key: string, fallback: string) -> string {
+    set i: int64 = 0
+    set count: int64 = res.keys.len()
+    while i < count {
+        if res.keys[i] == key {
+            return res.values[i]
+        }
+        rewrite i = i + 1
+    }
+    return fallback
+}
+
+// even though i’m a Yukino dev, i have no idea how it aligns booleans within an enum. xD
+public fun get_bool(ref res: VmResult, key: string) -> bool {
+    set val: string = get_str(ref res, key, "0")
+    return val == "1" || val == "true"
+}
+
+public fun get_int(ref res: VmResult, key: string, fallback: int64) -> int64 {
+    set s: string = get_str(ref res, key, "")
+    if s.len() == 0 { return fallback }
+    set out_val: int64 = fallback
+    sus {
+        rewrite out_val = cast(s, "int64")
+    } catch {
+        rewrite out_val = fallback
+    }
+    return out_val
+}
+
+public fun get_float(ref res: VmResult, key: string, fallback: float64) -> float64 {
+    set s: string = get_str(ref res, key, "")
+    if s.len() == 0 { return fallback }
+    set out_val: float64 = fallback
+    sus {
+        rewrite out_val = cast(s, "float64")
+    } catch {
+        rewrite out_val = fallback
+    }
+    return out_val
+}
+
+public fun get_count(ref res: VmResult, key: string) -> uint8 {
+    set n: int64 = get_int(ref res, key, 0)
+    return cast(n & 255, "uint8")
+}
+
+public fun set_param(ref ~res: VmResult, name: string, val: string) {
+    set_flag(ref ~res, name, val)
+}
+
+public fun get_param(ref res: VmResult, name: string, fallback: string) -> string {
+    return get_str(ref res, name, fallback)
+}
+
+public class ClarityVm {
+    res: VmResult
+    schema: RtSchema
+    cfg: Config?
+
+    public fun init(schema: RtSchema) {
+        rewrite this.res = init_vm_result()
+        rewrite this.schema = schema
+        rewrite this.cfg = null
+    }
+
+    fun set_slot(slot_id: int64, val: string) {
+        if slot_id >= 0 && slot_id < this.res.slots.len() {
+            rewrite this.res.slots[slot_id] = val
+        }
+    }
+
+    fun push_array_slot(slot_id: int64, val: string) {
+        if this.res.array_count < this.res.array_slots.len() {
+            rewrite this.res.array_slots[this.res.array_count] = slot_id
+            rewrite this.res.array_values[this.res.array_count] = val
+            rewrite this.res.array_count = this.res.array_count + 1
+        }
+    }
+
+    fun has_slot(slot_id: int64) -> bool {
+        if slot_id >= 0 && slot_id < this.res.slots.len() {
+            return this.res.slots[slot_id].len() > 0
+        }
+        return false
+    }
+
+    fun set_flag(name: string, val: string) {
+        set i: int64 = 0
+        set count: int64 = this.res.keys.len()
+        while i < count {
+            if this.res.keys[i] == name {
+                rewrite this.res.values[i] = val
+                return
+            }
+            rewrite i = i + 1
+        }
+        this.res.keys.push(name)
+        this.res.values.push(val)
+    }
+
+    fun get_str(key: string, fallback: string) -> string {
+        set i: int64 = 0
+        set count: int64 = this.res.keys.len()
+        while i < count {
+            if this.res.keys[i] == key {
+                return this.res.values[i]
+            }
+            rewrite i = i + 1
+        }
+        return fallback
+    }
+
+    fun get_slot_int(slot_id: int64, fallback: int64) -> int64 {
+        if slot_id >= 0 && slot_id < this.res.slots.len() {
+            set s: string = this.res.slots[slot_id]
+            if s.len() > 0 {
+                set out_val: int64 = fallback
+                sus { rewrite out_val = cast(s, "int64") } catch { rewrite out_val = fallback }
+                return out_val
+            }
+        }
+        return fallback
+    }
+
+    fun set_param(name: string, val: string) {
+        this.set_flag(name, val)
+    }
+
+    fun push_variadic(val: string) {
+        this.res.variadic_vals.push(val)
+    }
+
+    fun set_command_name(name: string) {
+        rewrite this.res.command_name = name
+    }
+
+    fun set_sub_name(name: string) {
+        rewrite this.res.sub_name = name
+    }
+
+    fun load_config() {
+        if this.schema.config_path.len() > 0 {
+            rewrite this.cfg = init Config(this.schema.config_path)
+        } elif this.schema.app.len() > 0 {
+            rewrite this.cfg = init Config(this.schema.app)
+        }
+    }
+
+    fun find_command(name: string) -> RtCommand? {
+        set i: int64 = 0
+        set count: int64 = this.schema.commands.len()
+        while i < count {
+            if this.schema.commands[i].name == name {
+                return this.schema.commands[i]
+            }
+            rewrite i = i + 1
+        }
+        return null
+    }
+
+    fun find_subcommand(ref cmd: RtCommand, name: string) -> RtCommand? {
+        set i: int64 = 0
+        set count: int64 = cmd.subcommands.len()
+        while i < count {
+            if cmd.subcommands[i].name == name {
+                return cmd.subcommands[i]
+            }
+            rewrite i = i + 1
+        }
+        return null
+    }
+
+    fun collect_cmd_subcommand_names(ref cmd: RtCommand) -> string[] {
+        set res: string[] = []
+        set i: int64 = 0
+        while i < cmd.subcommands.len() {
+            res.push(cmd.subcommands[i].name.cp())
+            rewrite i = i + 1
+        }
+        return res
+    }
+
+    fun apply_flag_validators(ref f: RtFlag, val: string) {
+        set i: int64 = 0
+        set count: int64 = f.validators.len()
+        while i < count {
+            set v: RtValidator = f.validators[i]
+            if v.kind == 1u8 {
+                set int_val: int64 = cast(val, "int64")
+                validate_range_int(int_val, v.int_min, v.int_max, f.long_name, f.error_msg)
+            } elif v.kind == 2u8 {
+                validate_pattern(val, v.str_val, f.long_name, f.error_msg)
+            } elif v.kind == 3u8 {
+                validate_exists(val, f.long_name, f.error_msg)
+            } elif v.kind == 4u8 {
+                validate_parent_exists(val, f.long_name, f.error_msg)
+            } elif v.kind == 5u8 {
+                validate_min_len(val.len(), v.int_min, f.long_name, f.error_msg)
+            } elif v.kind == 6u8 {
+                validate_max_len(val.len(), v.int_max, f.long_name, f.error_msg)
+            } elif v.kind == 7u8 {
+                validate_one_of(val, v.str_list, f.long_name, f.error_msg)
+            }
+            rewrite i = i + 1
+        }
+    }
+
+    fun has_array_slot(slot_id: int64) -> bool {
+        set k: int64 = 0
+        while k < this.res.array_count {
+            if this.res.array_slots[k] == slot_id {
+                return true
+            }
+            rewrite k = k + 1
+        }
+        return false
+    }
+
+    fun flag_is_set(ref f: RtFlag) -> bool {
+        if f.type_code == 8u8 || f.type_code == 9u8 || f.type_code == 10u8 {
+            return this.has_array_slot(f.slot_id)
+        }
+        return this.has_slot(f.slot_id) || this.get_str(f.long_name, "").len() > 0
+    }
+
+    fun resolve_fallback_flag(ref f: RtFlag) {
+        if f.type_code == 8u8 || f.type_code == 9u8 || f.type_code == 10u8 {
+            return
+        }
+        if this.has_slot(f.slot_id) || this.get_str(f.long_name, "").len() > 0 {
+            return
+        }
+        if f.env_var.len() > 0 {
+            set env_val: string? = get_env(f.env_var)
+            if env_val != null {
+                set ev: string = env_val ?? ""
+                this.set_slot(f.slot_id, ev)
+                this.set_flag(f.long_name, ev)
+                return
+            }
+        }
+        if f.config_key.len() > 0 && this.cfg != null {
+            set cfg_obj: Config = this.cfg ?? init Config("")
+            if cfg_obj.has(f.config_key) {
+                set cfg_val: string = cfg_obj.get_str(f.config_key, "")
+                this.set_slot(f.slot_id, cfg_val)
+                this.set_flag(f.long_name, cfg_val)
+                return
+            }
+        }
+        if f.has_default {
+            set dval: string = f.default_val
+            if f.type_code == 1u8 {
+                rewrite dval = if dval == "true" || dval == "1" { "1" } else { "0" }
+            }
+            this.set_slot(f.slot_id, dval)
+            this.set_flag(f.long_name, dval)
+            return
+        }
+        if !f.is_nullable && f.type_code != 1u8 && f.type_code != 5u8 {
+            print_error_missing_flag(f.long_name)
+        }
+    }
+
+    fun find_flag(ref cmd: RtCommand, name: string) -> RtFlag? {
+        set nlen: int64 = name.len()
+        set i: int64 = 0
+        set count: int64 = cmd.flags.len()
+        while i < count {
+            set f: RtFlag = cmd.flags[i]
+            if nlen == 1 {
+                if f.short_name == name { return f }
+            } elif f.long_name.len() == nlen {
+                if f.long_name == name { return f }
+            }
+            rewrite i = i + 1
+        }
+        rewrite i = 0
+        set ccount: int64 = this.schema.common_flags.len()
+        while i < ccount {
+            set cf: RtFlag = this.schema.common_flags[i]
+            if nlen == 1 {
+                if cf.short_name == name { return cf }
+            } elif cf.long_name.len() == nlen {
+                if cf.long_name == name { return cf }
+            }
+            rewrite i = i + 1
+        }
+        return null
+    }
+
+    fun has_user_flag(ref cmd: RtCommand, name: string) -> bool {
+        return this.find_flag(ref cmd, name) != null
+    }
+
+    fun is_help_flag(tok: string, ref cmd: RtCommand) -> bool {
+        if !this.schema.default_flags { return false }
+        if tok == "--help" && !this.has_user_flag(ref cmd, "help") { return true }
+        if tok == "-h" && !this.has_user_flag(ref cmd, "h") { return true }
+        return false
+    }
+
+    fun is_version_flag(tok: string, ref cmd: RtCommand) -> bool {
+        if !this.schema.default_flags { return false }
+        if tok == "--version" && !this.has_user_flag(ref cmd, "version") { return true }
+        if tok == "-V" && !this.has_user_flag(ref cmd, "V") { return true }
+        if tok == "-v" && !this.has_user_flag(ref cmd, "v") { return true }
+        return false
+    }
+
+    fun flag_expects_value(ref cmd: RtCommand, name: string) -> bool {
+        set opt_f: RtFlag? = this.find_flag(ref cmd, name)
+        if opt_f == null {
+            return false
+        }
+        set f: RtFlag = opt_f ?? cmd.flags[0]
+        return f.type_code != 1u8 && f.type_code != 5u8
+    }
+
+    fun validate_flag_relationships(ref cmd: RtCommand) {
+        set i: int64 = 0
+        while i < cmd.flags.len() {
+            set f: RtFlag = cmd.flags[i]
+            if this.flag_is_set(ref f) {
+                if f.conflicts_flag.len() > 0 && (this.get_str(f.conflicts_flag, "").len() > 0 || this.has_flag_value(ref cmd, f.conflicts_flag)) {
+                    print_error_conflict("--" + f.long_name, "--" + f.conflicts_flag)
+                }
+                if f.requires_flag.len() > 0 && !this.has_flag_value(ref cmd, f.requires_flag) {
+                    print_error_requires("--" + f.long_name, "--" + f.requires_flag)
+                }
+            }
+            rewrite i = i + 1
+        }
+        if !cmd.is_uncommon {
+            rewrite i = 0
+            while i < this.schema.common_flags.len() {
+                set cf: RtFlag = this.schema.common_flags[i]
+                if this.flag_is_set(ref cf) {
+                    if cf.conflicts_flag.len() > 0 && this.has_flag_value(ref cmd, cf.conflicts_flag) {
+                        print_error_conflict("--" + cf.long_name, "--" + cf.conflicts_flag)
+                    }
+                    if cf.requires_flag.len() > 0 && !this.has_flag_value(ref cmd, cf.requires_flag) {
+                        print_error_requires("--" + cf.long_name, "--" + cf.requires_flag)
+                    }
+                }
+                rewrite i = i + 1
+            }
+        }
+    }
+
+    fun has_flag_value(ref cmd: RtCommand, flag_name: string) -> bool {
+        set opt_f: RtFlag? = this.find_flag(ref cmd, flag_name)
+        if opt_f != null {
+            set f: RtFlag = opt_f ?? cmd.flags[0]
+            return this.flag_is_set(ref f)
+        }
+        return this.get_str(flag_name, "").len() > 0
+    }
+
+    fun validate_groups(ref cmd: RtCommand) {
+        set i: int64 = 0
+        while i < cmd.groups.len() {
+            set g: RtGroup = cmd.groups[i]
+            set set_count: int64 = 0
+            set first_set: string = ""
+            set second_set: string = ""
+            set j: int64 = 0
+            while j < g.flags.len() {
+                set f: RtFlag = g.flags[j]
+                if this.flag_is_set(ref f) {
+                    rewrite set_count = set_count + 1
+                    if first_set.len() == 0 {
+                        rewrite first_set = "--" + f.long_name
+                    } elif second_set.len() == 0 {
+                        rewrite second_set = "--" + f.long_name
+                    }
+                }
+                rewrite j = j + 1
+            }
+            if g.is_or && set_count > 1 {
+                print_error_conflict(first_set, second_set)
+            }
+            if !g.is_optional && set_count == 0 {
+                print_error_missing_flag(g.flags[0].long_name)
+            }
+            rewrite i = i + 1
+        }
+    }
+
+    fun parse_long_token(ref cmd: RtCommand, tok: string, next_arg: string, has_next: bool) -> int64 {
+        set raw: string = tok[2..tok.len()]
+        set eq_opt: int64? = index_of(raw, "=")
+        set eq_idx: int64 = eq_opt ?? -1
+        set flag_name: string = if eq_idx >= 0 { raw[0..eq_idx] } else { raw.cp() }
+        set opt_f: RtFlag? = this.find_flag(ref cmd, flag_name)
+        if opt_f == null {
+            set candidates: string[] = collect_flag_candidates(ref this.schema, ref cmd)
+            print_error_unexpected_arg(tok, ref candidates)
+        }
+        set f: RtFlag = opt_f ?? cmd.flags[0]
+        if this.flag_expects_value(ref cmd, flag_name) {
+            set flag_val: string = ""
+            set step: int64 = 1
+            if eq_idx >= 0 {
+                rewrite flag_val = raw[eq_idx + 1..raw.len()]
+            } else {
+                if !has_next || next_arg == "--" {
+                    print_error_missing_value(tok)
+                }
+                rewrite flag_val = next_arg
+                rewrite step = 2
+            }
+            this.apply_flag_validators(ref f, flag_val)
+            if f.type_code == 8u8 || f.type_code == 9u8 || f.type_code == 10u8 {
+                this.push_array_slot(f.slot_id, flag_val)
+            } else {
+                this.set_slot(f.slot_id, flag_val)
+                this.set_flag(f.long_name, flag_val)
+            }
+            return step
+        }
+        if f.type_code == 5u8 {
+            set cur_cnt: int64 = this.get_slot_int(f.slot_id, 0)
+            this.set_slot(f.slot_id, "${cur_cnt + 1}")
+            this.set_flag(f.long_name, "${cur_cnt + 1}")
+        } else {
+            this.set_slot(f.slot_id, "1")
+            this.set_flag(f.long_name, "1")
+        }
+        return 1
+    }
+
+    fun parse_short_token(ref cmd: RtCommand, tok: string, next_arg: string, has_next: bool) -> int64 {
+        set eq_opt: int64? = index_of(tok, "=")
+        set eq_idx: int64 = eq_opt ?? -1
+        if eq_idx >= 2 {
+            set ch: string = tok[1..eq_idx]
+            set opt_f: RtFlag? = this.find_flag(ref cmd, ch)
+            if opt_f == null {
+                set candidates: string[] = collect_flag_candidates(ref this.schema, ref cmd)
+                print_error_unexpected_arg(tok, ref candidates)
+            }
+            set f: RtFlag = opt_f ?? cmd.flags[0]
+            set flag_val: string = tok[eq_idx + 1..tok.len()]
+            this.apply_flag_validators(ref f, flag_val)
+            if f.type_code == 8u8 || f.type_code == 9u8 || f.type_code == 10u8 {
+                this.push_array_slot(f.slot_id, flag_val)
+            } else {
+                this.set_slot(f.slot_id, flag_val)
+                this.set_flag(f.long_name, flag_val)
+            }
+            return 1
+        }
+        if tok.len() == 2 {
+            set ch: string = tok[1..2]
+            set opt_f: RtFlag? = this.find_flag(ref cmd, ch)
+            if opt_f == null {
+                set candidates: string[] = collect_flag_candidates(ref this.schema, ref cmd)
+                print_error_unexpected_arg(tok, ref candidates)
+            }
+            set f: RtFlag = opt_f ?? cmd.flags[0]
+            if this.flag_expects_value(ref cmd, ch) {
+                if !has_next || next_arg == "--" {
+                    print_error_missing_value(tok)
+                }
+                this.apply_flag_validators(ref f, next_arg)
+                if f.type_code == 8u8 || f.type_code == 9u8 || f.type_code == 10u8 {
+                    this.push_array_slot(f.slot_id, next_arg)
+                } else {
+                    this.set_slot(f.slot_id, next_arg)
+                    this.set_flag(f.long_name, next_arg)
+                }
+                return 2
+            }
+            if f.type_code == 5u8 {
+                set cur_cnt: int64 = this.get_slot_int(f.slot_id, 0)
+                this.set_slot(f.slot_id, "${cur_cnt + 1}")
+                this.set_flag(f.long_name, "${cur_cnt + 1}")
+            } else {
+                this.set_slot(f.slot_id, "1")
+                this.set_flag(f.long_name, "1")
+            }
+            return 1
+        }
+        set first_ch: string = tok[1..2]
+        set opt_first: RtFlag? = this.find_flag(ref cmd, first_ch)
+        if opt_first != null && this.flag_expects_value(ref cmd, first_ch) {
+            set f: RtFlag = opt_first ?? cmd.flags[0]
+            set flag_val: string = tok[2..tok.len()]
+            this.apply_flag_validators(ref f, flag_val)
+            if f.type_code == 8u8 || f.type_code == 9u8 || f.type_code == 10u8 {
+                this.push_array_slot(f.slot_id, flag_val)
+            } else {
+                this.set_slot(f.slot_id, flag_val)
+                this.set_flag(f.long_name, flag_val)
+            }
+            return 1
+        }
+        set j: int64 = 1
+        while j < tok.len() {
+            set bch: string = tok[j..j + 1]
+            set bopt_f: RtFlag? = this.find_flag(ref cmd, bch)
+            if bopt_f == null {
+                set candidates: string[] = collect_flag_candidates(ref this.schema, ref cmd)
+                print_error_unexpected_arg("-" + bch, ref candidates)
+            }
+            set bf: RtFlag = bopt_f ?? cmd.flags[0]
+            if bf.type_code == 5u8 {
+                set cur_cnt: int64 = this.get_slot_int(bf.slot_id, 0)
+                this.set_slot(bf.slot_id, "${cur_cnt + 1}")
+                this.set_flag(bf.long_name, "${cur_cnt + 1}")
+            } else {
+                this.set_slot(bf.slot_id, "1")
+                this.set_flag(bf.long_name, "1")
+            }
+            rewrite j = j + 1
+        }
+        return 1
+    }
+
+    fun fill_positional_params(ref cmd: RtCommand, ref positionals: string[]) {
+        set i: int64 = 0
+        set pos_count: int64 = positionals.len()
+        set param_count: int64 = cmd.params.len()
+        while i < param_count {
+            set p: RtParam = cmd.params[i]
+            if p.is_variadic {
+                set j: int64 = i
+                while j < pos_count {
+                    this.push_variadic(positionals[j].cp())
+                    rewrite j = j + 1
+                }
+                break
+            } elif i < pos_count {
+                this.set_slot(p.slot_id, positionals[i])
+                this.set_param(p.name, positionals[i])
+            } elif p.has_default {
+                this.set_slot(p.slot_id, p.default_val)
+                this.set_param(p.name, p.default_val)
+            } elif p.is_nullable {
+                space
+            } else {
+                print_error_missing_param(p.name)
+            }
+            rewrite i = i + 1
+        }
+    }
+
+    fun handle_cmd_help(ref cmd: RtCommand, ref args: string[], start_idx: int64, ref sub_cands: string[]) {
+        if args.len() > start_idx + 1 {
+            set target: string = args[start_idx + 1].cp()
+            set opt_sub: RtCommand? = this.find_subcommand(ref cmd, target)
+            if opt_sub != null {
+                set sub_cmd: RtCommand = opt_sub ?? init_empty_command()
+                println(render_command_help(ref this.schema, ref sub_cmd))
+                flush()
+                exit(0)
+            }
+            print_error_unknown_subcommand(target, ref sub_cands)
+        }
+        println(render_command_help(ref this.schema, ref cmd))
+        flush()
+        exit(0)
+    }
+
+    fun parse_args_into(cmd: RtCommand, ref args: string[], start_idx: int64, is_top: bool) -> VmResult {
+        if is_top {
+            this.set_command_name(cmd.name)
+        }
+        set positionals: string[] = []
+        set i: int64 = start_idx
+        set count: int64 = args.len()
+
+        while i < count {
+            set tok: string = args[i].cp()
+            if tok == "--" {
+                set r: int64 = i + 1
+                while r < count {
+                    positionals.push(args[r].cp())
+                    rewrite r = r + 1
+                }
+                break
+            } elif this.is_help_flag(tok, ref cmd) {
+                println(render_command_help(ref this.schema, ref cmd))
+                flush()
+                exit(0)
+            } elif this.is_version_flag(tok, ref cmd) {
+                println(render_version(ref this.schema))
+                flush()
+                exit(0)
+            } elif tok == "help" && cmd.subcommands.len() > 0 {
+                set sub_cands: string[] = this.collect_cmd_subcommand_names(ref cmd)
+                this.handle_cmd_help(ref cmd, ref args, i, ref sub_cands)
+            } elif tok.len() > 2 && tok[0..2] == "--" {
+                set next_arg: string = if i + 1 < count { args[i + 1].cp() } else { "" }
+                set has_next: bool = i + 1 < count
+                set step: int64 = this.parse_long_token(ref cmd, tok, next_arg, has_next)
+                rewrite i = i + step
+            } elif tok.len() > 1 && tok[0..1] == "-" {
+                set next_arg: string = if i + 1 < count { args[i + 1].cp() } else { "" }
+                set has_next: bool = i + 1 < count
+                set step: int64 = this.parse_short_token(ref cmd, tok, next_arg, has_next)
+                rewrite i = i + step
+            } else {
+                if cmd.subcommands.len() > 0 {
+                    set opt_sub: RtCommand? = this.find_subcommand(ref cmd, tok)
+                    if opt_sub != null {
+                        set sub_cmd: RtCommand = opt_sub ?? init_empty_command()
+                        this.set_sub_name(sub_cmd.name.cp())
+                        return this.parse_args_into(sub_cmd, ref args, i + 1, false)
+                    }
+                    if cmd.params.len() == 0 {
+                        set sub_cands: string[] = this.collect_cmd_subcommand_names(ref cmd)
+                        print_error_unknown_subcommand(tok, ref sub_cands)
+                    }
+                }
+                positionals.push(tok)
+                rewrite i = i + 1
+            }
+        }
+
+        rewrite i = 0
+        while i < cmd.flags.len() {
+            this.resolve_fallback_flag(ref cmd.flags[i])
+            rewrite i = i + 1
+        }
+        if !cmd.is_uncommon {
+            rewrite i = 0
+            while i < this.schema.common_flags.len() {
+                this.resolve_fallback_flag(ref this.schema.common_flags[i])
+                rewrite i = i + 1
+            }
+        }
+        this.fill_positional_params(ref cmd, ref positionals)
+        this.validate_flag_relationships(ref cmd)
+        this.validate_groups(ref cmd)
+        return this.res
+    }
+
+    fun handle_help_command(ref args: string[], ref cmd_candidates: string[]) {
+        if args.len() > 1 {
+            set target: string = args[1].cp()
+            set matched: RtCommand? = this.find_command(target)
+            if matched != null {
+                set cmd: RtCommand = matched ?? init_empty_command()
+                if args.len() > 2 {
+                    set sub_target: string = args[2].cp()
+                    set opt_sub: RtCommand? = this.find_subcommand(ref cmd, sub_target)
+                    if opt_sub != null {
+                        set sub_cmd: RtCommand = opt_sub ?? init_empty_command()
+                        println(render_command_help(ref this.schema, ref sub_cmd))
+                        flush()
+                        exit(0)
+                    }
+                    set sub_cands: string[] = this.collect_cmd_subcommand_names(ref cmd)
+                    print_error_unknown_subcommand(sub_target, ref sub_cands)
+                }
+                println(render_command_help(ref this.schema, ref cmd))
+                flush()
+                exit(0)
+            }
+            print_error_unknown_subcommand(target, ref cmd_candidates)
+        }
+        println(render_app_help(ref this.schema))
+        flush()
+        exit(0)
+    }
+
+    public fun run(args: string[]) -> VmResult {
+        this.load_config()
+        set cmd_candidates: string[] = collect_subcommand_names(ref this.schema)
+
+        if args.len() == 0 {
+            if this.schema.root_command != null {
+                set root: RtCommand = this.schema.root_command ?? init_empty_command()
+                return this.parse_args_into(root, ref args, 0, true)
+            }
+            if this.schema.commands.len() > 0 {
+                println(render_app_help(ref this.schema))
+                flush()
+                exit(0)
+            }
+        }
+
+        set first: string = args[0].cp()
+        set root_or_empty: RtCommand = if this.schema.root_command != null {
+            this.schema.root_command ?? init_empty_command()
+        } else {
+            init_empty_command()
+        }
+
+        if this.is_help_flag(first, ref root_or_empty) {
+            if args.len() > 1 {
+                set target: string = args[1].cp()
+                set matched: RtCommand? = this.find_command(target)
+                if matched != null {
+                    set cmd: RtCommand = matched ?? init_empty_command()
+                    println(render_command_help(ref this.schema, ref cmd))
+                    flush()
+                    exit(0)
+                }
+                print_error_unknown_subcommand(target, ref cmd_candidates)
+            }
+            if this.schema.root_command != null && this.schema.commands.len() == 0 {
+                set root: RtCommand = this.schema.root_command ?? init_empty_command()
+                println(render_command_help(ref this.schema, ref root))
+                flush()
+                exit(0)
+            }
+            println(render_app_help(ref this.schema))
+            flush()
+            exit(0)
+        }
+        if this.is_version_flag(first, ref root_or_empty) {
+            println(render_version(ref this.schema))
+            flush()
+            exit(0)
+        }
+        if first == "help" {
+            this.handle_help_command(ref args, ref cmd_candidates)
+        }
+        if first == "completions" && this.find_command("completions") == null {
+            if args.len() > 1 {
+                set sh: string = args[1]
+                if sh == "bash" {
+                    println(generate_bash(ref this.schema))
+                    flush()
+                    exit(0)
+                } elif sh == "zsh" {
+                    println(generate_zsh(ref this.schema))
+                    flush()
+                    exit(0)
+                } elif sh == "fish" {
+                    println(generate_fish(ref this.schema))
+                    flush()
+                    exit(0)
+                }
+            }
+            println("Usage: ${this.schema.app} completions <bash|zsh|fish>")
+            flush()
+            exit(0)
+        }
+
+        set matched_cmd: RtCommand? = this.find_command(first)
+        if matched_cmd != null {
+            set cmd: RtCommand = matched_cmd ?? init_empty_command()
+            return this.parse_args_into(cmd, ref args, 1, true)
+        }
+
+        if this.schema.root_command != null {
+            set root: RtCommand = this.schema.root_command ?? init_empty_command()
+            return this.parse_args_into(root, ref args, 0, true)
+        }
+
+        if first.len() > 0 && first[0..1] == "-" {
+            set empty_cmd: RtCommand = if this.schema.commands.len() > 0 { this.schema.commands[0] } else { init_empty_command() }
+            set common_candidates: string[] = collect_flag_candidates(ref this.schema, ref empty_cmd)
+            print_error_unexpected_arg(first, ref common_candidates)
+        }
+        print_error_unknown_subcommand(first, ref cmd_candidates)
+        return this.res
+    }
+}
+
+public fun run_vm(bc_data: bytes, args: string[]) -> VmResult {
+    set reader: BytecodeReader = init BytecodeReader(bc_data)
+    set schema: RtSchema = reader.decode()
+    set vm: ClarityVm = init ClarityVm(schema)
+    return vm.run(args)
+}
+
+public fun run_vm_safe(bc_data: bytes, args: string[]) -> VmResult {
+    sus {
+        set reader: BytecodeReader = init BytecodeReader(bc_data)
+        set schema: RtSchema = reader.decode()
+        set vm: ClarityVm = init ClarityVm(schema)
+        return vm.run(args)
+    } catch {
+        set empty_res: VmResult = init_vm_result()
+        rewrite empty_res.success = false
+        return empty_res
+    }
+}

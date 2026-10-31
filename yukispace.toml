@@ -1,0 +1,10 @@
+[workspace]
+name = "clarity"
+members = [
+    "libs/*",
+    "apps/*",
+]
+
+[workspace.build]
+archives = []
+system = []

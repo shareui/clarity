@@ -1,0 +1,11 @@
+public struct ClarityRuntimeError {
+    message: string
+    code: int32
+}
+
+public fun clarity_rt_error(message: string, code: int32 = 1) -> ClarityRuntimeError {
+    return ClarityRuntimeError {
+        message: message,
+        code: code,
+    }
+}

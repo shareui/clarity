@@ -1,0 +1,357 @@
+load .errors: clarity_rt_error
+
+public struct RtValidator {
+    kind: uint8
+    int_min: int64
+    int_max: int64
+    str_val: string
+    str_list: string[]
+}
+
+public struct RtFlag {
+    long_name: string
+    short_name: string
+    type_code: uint8
+    is_nullable: bool
+    has_default: bool
+    default_val: string
+    env_var: string
+    config_key: string
+    requires_flag: string
+    conflicts_flag: string
+    error_msg: string
+    about: string
+    enum_variants: string[]
+    validators: RtValidator[]
+    slot_id: int64
+}
+
+public struct RtParam {
+    name: string
+    type_code: uint8
+    is_variadic: bool
+    has_default: bool
+    is_nullable: bool
+    default_val: string
+    about: string
+    validators: RtValidator[]
+    slot_id: int64
+}
+
+public struct RtGroup {
+    name: string
+    is_or: bool
+    is_optional: bool
+    about: string
+    flags: RtFlag[]
+}
+
+public struct RtCommand {
+    name: string
+    about: string
+    is_root: bool
+    is_uncommon: bool
+    is_config: bool
+    flags: RtFlag[]
+    params: RtParam[]
+    groups: RtGroup[]
+    subcommands: RtCommand[]
+}
+
+public struct RtSchema {
+    app: string
+    version: string
+    author: string
+    about: string
+    config_path: string
+    default_flags: bool
+    common_flags: RtFlag[]
+    root_command: RtCommand?
+    commands: RtCommand[]
+}
+
+public class BytecodeReader {
+    data: bytes
+    pos: int64
+    pool: string[]
+
+    public fun init(data: bytes) {
+        rewrite this.data = data
+        rewrite this.pos = 0
+        rewrite this.pool = []
+    }
+
+    fun read_u8() -> uint8 {
+        if this.pos >= this.data.len() {
+            panic(clarity_rt_error("unexpected end of bytecode", 201))
+        }
+        set b: uint8 = this.data[this.pos]
+        rewrite this.pos = this.pos + 1
+        return b
+    }
+
+    fun read_u16() -> int64 {
+        set b0: int64 = cast(this.read_u8(), "int64")
+        set b1: int64 = cast(this.read_u8(), "int64")
+        return b0 | (b1 << 8)
+    }
+
+    fun read_i64() -> int64 {
+        set res: int64 = 0
+        set i: int64 = 0
+        while i < 8 {
+            set b: int64 = cast(this.read_u8(), "int64")
+            rewrite res = res | (b << (i * 8))
+            rewrite i = i + 1
+        }
+        return res
+    }
+
+    fun pool_str(idx: int64) -> string {
+        if idx <= 0 || idx >= this.pool.len() { return "" }
+        return this.pool[idx]
+    }
+
+    fun read_pool() {
+        set count: int64 = this.read_u16()
+        set i: int64 = 0
+        while i < count {
+            set slen: int64 = this.read_u16()
+            set start: int64 = this.pos
+            rewrite this.pos = this.pos + slen
+            set s: string = cast(this.data[start..this.pos], "string")
+            this.pool.push(s)
+            rewrite i = i + 1
+        }
+    }
+
+    fun read_validator() -> RtValidator {
+        set kind: uint8 = this.read_u8()
+        set int_min: int64 = this.read_i64()
+        set int_max: int64 = this.read_i64()
+        set str_val: string = this.pool_str(this.read_u16())
+        set str_count: int64 = this.read_u16()
+        set str_list: string[] = []
+        set i: int64 = 0
+        while i < str_count {
+            str_list.push(this.pool_str(this.read_u16()))
+            rewrite i = i + 1
+        }
+        return RtValidator {
+            kind: kind,
+            int_min: int_min,
+            int_max: int_max,
+            str_val: str_val,
+            str_list: str_list,
+        }
+    }
+
+    fun read_flag() -> RtFlag {
+        set long_name: string = this.pool_str(this.read_u16())
+        set short_name: string = this.pool_str(this.read_u16())
+        set type_code: uint8 = this.read_u8()
+        set is_nullable: bool = this.read_u8() == 1u8
+        set has_default: bool = this.read_u8() == 1u8
+        set default_val: string = this.pool_str(this.read_u16())
+        set env_var: string = this.pool_str(this.read_u16())
+        set config_key: string = this.pool_str(this.read_u16())
+        set requires_flag: string = this.pool_str(this.read_u16())
+        set conflicts_flag: string = this.pool_str(this.read_u16())
+        set error_msg: string = this.pool_str(this.read_u16())
+        set about: string = this.pool_str(this.read_u16())
+        set slot_id: int64 = this.read_u16()
+
+        set ev_count: int64 = this.read_u16()
+        set enum_variants: string[] = []
+        set i: int64 = 0
+        while i < ev_count {
+            enum_variants.push(this.pool_str(this.read_u16()))
+            rewrite i = i + 1
+        }
+
+        set v_count: int64 = this.read_u16()
+        set validators: RtValidator[] = []
+        rewrite i = 0
+        while i < v_count {
+            validators.push(this.read_validator())
+            rewrite i = i + 1
+        }
+
+        return RtFlag {
+            long_name: long_name,
+            short_name: short_name,
+            type_code: type_code,
+            is_nullable: is_nullable,
+            has_default: has_default,
+            default_val: default_val,
+            env_var: env_var,
+            config_key: config_key,
+            requires_flag: requires_flag,
+            conflicts_flag: conflicts_flag,
+            error_msg: error_msg,
+            about: about,
+            enum_variants: enum_variants,
+            validators: validators,
+            slot_id: slot_id,
+        }
+    }
+
+    fun read_param() -> RtParam {
+        set name: string = this.pool_str(this.read_u16())
+        set type_code: uint8 = this.read_u8()
+        set is_variadic: bool = this.read_u8() == 1u8
+        set has_default: bool = this.read_u8() == 1u8
+        set is_nullable: bool = this.read_u8() == 1u8
+        set slot_id: int64 = this.read_u16()
+        set default_val: string = this.pool_str(this.read_u16())
+        set about: string = this.pool_str(this.read_u16())
+
+        set v_count: int64 = this.read_u16()
+        set validators: RtValidator[] = []
+        set i: int64 = 0
+        while i < v_count {
+            validators.push(this.read_validator())
+            rewrite i = i + 1
+        }
+
+        return RtParam {
+            name: name,
+            type_code: type_code,
+            is_variadic: is_variadic,
+            has_default: has_default,
+            is_nullable: is_nullable,
+            default_val: default_val,
+            about: about,
+            validators: validators,
+            slot_id: slot_id,
+        }
+    }
+
+    fun read_group() -> RtGroup {
+        set name: string = this.pool_str(this.read_u16())
+        set is_or: bool = this.read_u8() == 1u8
+        set is_optional: bool = this.read_u8() == 1u8
+        set about: string = this.pool_str(this.read_u16())
+
+        set f_count: int64 = this.read_u16()
+        set flags: RtFlag[] = []
+        set i: int64 = 0
+        while i < f_count {
+            flags.push(this.read_flag())
+            rewrite i = i + 1
+        }
+
+        return RtGroup {
+            name: name,
+            is_or: is_or,
+            is_optional: is_optional,
+            about: about,
+            flags: flags,
+        }
+    }
+
+    fun read_command() -> RtCommand {
+        set name: string = this.pool_str(this.read_u16())
+        set about: string = this.pool_str(this.read_u16())
+        set mask: uint8 = this.read_u8()
+        set is_root: bool = (mask & 1u8) != 0u8
+        set is_uncommon: bool = (mask & 2u8) != 0u8
+        set is_config: bool = (mask & 4u8) != 0u8
+
+        set f_count: int64 = this.read_u16()
+        set flags: RtFlag[] = []
+        set i: int64 = 0
+        while i < f_count {
+            flags.push(this.read_flag())
+            rewrite i = i + 1
+        }
+
+        set p_count: int64 = this.read_u16()
+        set params: RtParam[] = []
+        rewrite i = 0
+        while i < p_count {
+            params.push(this.read_param())
+            rewrite i = i + 1
+        }
+
+        set g_count: int64 = this.read_u16()
+        set groups: RtGroup[] = []
+        rewrite i = 0
+        while i < g_count {
+            groups.push(this.read_group())
+            rewrite i = i + 1
+        }
+
+        set sub_count: int64 = this.read_u16()
+        set subcommands: RtCommand[] = []
+        rewrite i = 0
+        while i < sub_count {
+            subcommands.push(this.read_command())
+            rewrite i = i + 1
+        }
+
+        return RtCommand {
+            name: name,
+            about: about,
+            is_root: is_root,
+            is_uncommon: is_uncommon,
+            is_config: is_config,
+            flags: flags,
+            params: params,
+            groups: groups,
+            subcommands: subcommands,
+        }
+    }
+
+    public fun decode() -> RtSchema {
+        if this.read_u8() != 67u8 || this.read_u8() != 76u8 || this.read_u8() != 66u8 || this.read_u8() != 67u8 {
+            panic(clarity_rt_error("invalid clarity bytecode magic header", 200))
+        }
+        set ver: int64 = this.read_u16()
+        if ver != 2 {
+            panic(clarity_rt_error("unsupported clarity bytecode version ${ver}", 202))
+        }
+        this.read_pool()
+
+        set app: string = this.pool_str(this.read_u16())
+        set version: string = this.pool_str(this.read_u16())
+        set author: string = this.pool_str(this.read_u16())
+        set about: string = this.pool_str(this.read_u16())
+        set config_path: string = this.pool_str(this.read_u16())
+        set default_flags: bool = this.read_u8() == 1u8
+
+        set common_count: int64 = this.read_u16()
+        set common_flags: RtFlag[] = []
+        set i: int64 = 0
+        while i < common_count {
+            common_flags.push(this.read_flag())
+            rewrite i = i + 1
+        }
+
+        set has_root: bool = this.read_u8() == 1u8
+        set root_command: RtCommand? = null
+        if has_root {
+            rewrite root_command = this.read_command()
+        }
+
+        set cmd_count: int64 = this.read_u16()
+        set commands: RtCommand[] = []
+        rewrite i = 0
+        while i < cmd_count {
+            commands.push(this.read_command())
+            rewrite i = i + 1
+        }
+
+        return RtSchema {
+            app: app,
+            version: version,
+            author: author,
+            about: about,
+            config_path: config_path,
+            default_flags: default_flags,
+            common_flags: common_flags,
+            root_command: root_command,
+            commands: commands,
+        }
+    }
+}

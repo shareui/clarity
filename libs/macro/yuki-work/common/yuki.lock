@@ -1,0 +1,21 @@
+version = 1
+target = "x86_64-unknown-linux-gnu"
+compiler = "0.1.0"
+profile = "debug"
+
+[[package]]
+name = "clarity_core"
+version = "0.1.0"
+kind = "static"
+source = "path+../core"
+checksum = "blake3:7afb0fb84257573310038cee00cfd56fb83e43fe823f83a935e51d8508bc9187"
+features = ["default"]
+
+[[package]]
+name = "scheme"
+version = "0.1.0"
+kind = "macro"
+source = "root"
+checksum = "blake3:7c37cd3e381e80ba41e8450f60dd6d479b213aab621eb9109e78ee8aa828e0d3"
+features = ["default"]
+dependencies = ["clarity_core"]

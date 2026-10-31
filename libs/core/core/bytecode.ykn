@@ -1,0 +1,399 @@
+load .ast: ClaritySchema, CommandDef, FlagDef, ParamDef, GroupDef, ValidatorDef
+load .ast: init_command
+
+fun hex_digit(n: int64) -> string {
+    set v: int64 = n & 15
+    if v < 10 { return "${v}" }
+    if v == 10 { return "a" }
+    if v == 11 { return "b" }
+    if v == 12 { return "c" }
+    if v == 13 { return "d" }
+    if v == 14 { return "e" }
+    return "f"
+}
+
+fun hex_byte(b: int64) -> string {
+    set h1: string = hex_digit(b >> 4)
+    set h2: string = hex_digit(b)
+    return "\\x${h1}${h2}"
+}
+
+fun hex_u16(v: int64) -> string {
+    set b0: string = hex_byte(v & 255)
+    set b1: string = hex_byte((v >> 8) & 255)
+    return "${b0}${b1}"
+}
+
+fun hex_i64(val: int64) -> string {
+    set res: string = ""
+    set v: int64 = val
+    set i: int64 = 0
+    while i < 8 {
+        rewrite res = res + hex_byte(v & 255)
+        rewrite v = v >> 8
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun hex_str_bytes(s: string) -> string {
+    set res: string = hex_u16(s.len())
+    set i: int64 = 0
+    while i < s.len() {
+        set b: int64 = cast(s[i], "int64")
+        rewrite res = res + hex_byte(b)
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun type_to_code(type_name: string) -> int64 {
+    if type_name == "bool" { return 1 }
+    if type_name == "int" || type_name == "int32" || type_name == "int64" { return 2 }
+    if type_name == "float" || type_name == "float64" { return 3 }
+    if type_name == "str" || type_name == "string" { return 4 }
+    if type_name == "count" { return 5 }
+    if type_name == "path" { return 6 }
+    if type_name == "enum" { return 7 }
+    if type_name == "str[]" || type_name == "string[]" { return 8 }
+    if type_name == "int[]" { return 9 }
+    if type_name == "path[]" { return 10 }
+    return 0
+}
+
+fun validator_to_code(kind: string) -> int64 {
+    if kind == "range" { return 1 }
+    if kind == "pattern" { return 2 }
+    if kind == "exists" { return 3 }
+    if kind == "parent_exists" { return 4 }
+    if kind == "min_len" { return 5 }
+    if kind == "max_len" { return 6 }
+    if kind == "one_of" { return 7 }
+    return 0
+}
+
+fun collect_flag_strings(ref flag: FlagDef) -> string[] {
+    set res: string[] = []
+    if flag.long_name.len() > 0 { res.push(flag.long_name) }
+    if flag.short_name.len() > 0 { res.push(flag.short_name) }
+    if flag.default_val.len() > 0 { res.push(flag.default_val) }
+    if flag.env_var.len() > 0 { res.push(flag.env_var) }
+    if flag.config_key.len() > 0 { res.push(flag.config_key) }
+    if flag.requires_flag.len() > 0 { res.push(flag.requires_flag) }
+    if flag.conflicts_flag.len() > 0 { res.push(flag.conflicts_flag) }
+    if flag.error_msg.len() > 0 { res.push(flag.error_msg) }
+    if flag.about.len() > 0 { res.push(flag.about) }
+    set i: int64 = 0
+    while i < flag.enum_variants.len() {
+        res.push(flag.enum_variants[i])
+        rewrite i = i + 1
+    }
+    rewrite i = 0
+    while i < flag.validators.len() {
+        set v: ValidatorDef = flag.validators[i]
+        if v.str_val.len() > 0 { res.push(v.str_val) }
+        set j: int64 = 0
+        while j < v.str_list.len() {
+            res.push(v.str_list[j])
+            rewrite j = j + 1
+        }
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun collect_param_strings(ref param: ParamDef) -> string[] {
+    set res: string[] = []
+    if param.name.len() > 0 { res.push(param.name) }
+    if param.default_val.len() > 0 { res.push(param.default_val) }
+    if param.about.len() > 0 { res.push(param.about) }
+    set i: int64 = 0
+    while i < param.validators.len() {
+        set v: ValidatorDef = param.validators[i]
+        if v.str_val.len() > 0 { res.push(v.str_val) }
+        set j: int64 = 0
+        while j < v.str_list.len() {
+            res.push(v.str_list[j])
+            rewrite j = j + 1
+        }
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun collect_group_strings(ref grp: GroupDef) -> string[] {
+    set res: string[] = []
+    if grp.name.len() > 0 { res.push(grp.name) }
+    if grp.about.len() > 0 { res.push(grp.about) }
+    set i: int64 = 0
+    while i < grp.flags.len() {
+        set fs: string[] = collect_flag_strings(ref grp.flags[i])
+        set j: int64 = 0
+        while j < fs.len() {
+            res.push(fs[j])
+            rewrite j = j + 1
+        }
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun collect_cmd_strings(ref cmd: CommandDef) -> string[] {
+    set res: string[] = []
+    if cmd.name.len() > 0 { res.push(cmd.name) }
+    if cmd.about.len() > 0 { res.push(cmd.about) }
+    set i: int64 = 0
+    while i < cmd.flags.len() {
+        set fs: string[] = collect_flag_strings(ref cmd.flags[i])
+        set j: int64 = 0
+        while j < fs.len() {
+            res.push(fs[j])
+            rewrite j = j + 1
+        }
+        rewrite i = i + 1
+    }
+    rewrite i = 0
+    while i < cmd.params.len() {
+        set ps: string[] = collect_param_strings(ref cmd.params[i])
+        set j: int64 = 0
+        while j < ps.len() {
+            res.push(ps[j])
+            rewrite j = j + 1
+        }
+        rewrite i = i + 1
+    }
+    rewrite i = 0
+    while i < cmd.groups.len() {
+        set gs: string[] = collect_group_strings(ref cmd.groups[i])
+        set j: int64 = 0
+        while j < gs.len() {
+            res.push(gs[j])
+            rewrite j = j + 1
+        }
+        rewrite i = i + 1
+    }
+    rewrite i = 0
+    while i < cmd.subcommands.len() {
+        set subs: string[] = collect_cmd_strings(ref cmd.subcommands[i])
+        set j: int64 = 0
+        while j < subs.len() {
+            res.push(subs[j])
+            rewrite j = j + 1
+        }
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun in_pool(ref pool: string[], s: string) -> bool {
+    set i: int64 = 0
+    while i < pool.len() {
+        if pool[i] == s { return true }
+        rewrite i = i + 1
+    }
+    return false
+}
+
+fun collect_all_strings(ref schema: ClaritySchema) -> string[] {
+    set pool: string[] = [""]
+    if schema.meta.app.len() > 0 && !in_pool(ref pool, schema.meta.app) { pool.push(schema.meta.app) }
+    if schema.meta.version.len() > 0 && !in_pool(ref pool, schema.meta.version) { pool.push(schema.meta.version) }
+    if schema.meta.author.len() > 0 && !in_pool(ref pool, schema.meta.author) { pool.push(schema.meta.author) }
+    if schema.meta.about.len() > 0 && !in_pool(ref pool, schema.meta.about) { pool.push(schema.meta.about) }
+    if schema.meta.config_path.len() > 0 && !in_pool(ref pool, schema.meta.config_path) { pool.push(schema.meta.config_path) }
+    set i: int64 = 0
+    while i < schema.common_flags.len() {
+        set fs: string[] = collect_flag_strings(ref schema.common_flags[i])
+        set j: int64 = 0
+        while j < fs.len() {
+            if !in_pool(ref pool, fs[j]) { pool.push(fs[j]) }
+            rewrite j = j + 1
+        }
+        rewrite i = i + 1
+    }
+    if schema.root_command != null {
+        set root: CommandDef = schema.root_command ?? init_command("", true)
+        set rs: string[] = collect_cmd_strings(ref root)
+        set j: int64 = 0
+        while j < rs.len() {
+            if !in_pool(ref pool, rs[j]) { pool.push(rs[j]) }
+            rewrite j = j + 1
+        }
+    }
+    rewrite i = 0
+    while i < schema.commands.len() {
+        set cs: string[] = collect_cmd_strings(ref schema.commands[i])
+        set j: int64 = 0
+        while j < cs.len() {
+            if !in_pool(ref pool, cs[j]) { pool.push(cs[j]) }
+            rewrite j = j + 1
+        }
+        rewrite i = i + 1
+    }
+    return pool
+}
+
+fun string_index(ref pool: string[], s: string) -> int64 {
+    if s.len() == 0 { return 0 }
+    set i: int64 = 0
+    while i < pool.len() {
+        if pool[i] == s { return i }
+        rewrite i = i + 1
+    }
+    return 0
+}
+
+fun emit_validator(ref v: ValidatorDef, ref pool: string[]) -> string {
+    set res: string = hex_byte(validator_to_code(v.kind))
+    rewrite res = res + hex_i64(v.int_min)
+    rewrite res = res + hex_i64(v.int_max)
+    rewrite res = res + hex_u16(string_index(ref pool, v.str_val))
+    rewrite res = res + hex_u16(v.str_list.len())
+    set i: int64 = 0
+    while i < v.str_list.len() {
+        rewrite res = res + hex_u16(string_index(ref pool, v.str_list[i]))
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun emit_flag(ref flag: FlagDef, ref pool: string[]) -> string {
+    set res: string = hex_u16(string_index(ref pool, flag.long_name))
+    rewrite res = res + hex_u16(string_index(ref pool, flag.short_name))
+    rewrite res = res + hex_byte(type_to_code(flag.type_name))
+    if flag.is_nullable { rewrite res = res + hex_byte(1) } else { rewrite res = res + hex_byte(0) }
+    if flag.has_default { rewrite res = res + hex_byte(1) } else { rewrite res = res + hex_byte(0) }
+    rewrite res = res + hex_u16(string_index(ref pool, flag.default_val))
+    rewrite res = res + hex_u16(string_index(ref pool, flag.env_var))
+    rewrite res = res + hex_u16(string_index(ref pool, flag.config_key))
+    rewrite res = res + hex_u16(string_index(ref pool, flag.requires_flag))
+    rewrite res = res + hex_u16(string_index(ref pool, flag.conflicts_flag))
+    rewrite res = res + hex_u16(string_index(ref pool, flag.error_msg))
+    rewrite res = res + hex_u16(string_index(ref pool, flag.about))
+    rewrite res = res + hex_u16(flag.slot_id)
+    rewrite res = res + hex_u16(flag.enum_variants.len())
+    set i: int64 = 0
+    while i < flag.enum_variants.len() {
+        rewrite res = res + hex_u16(string_index(ref pool, flag.enum_variants[i]))
+        rewrite i = i + 1
+    }
+    rewrite res = res + hex_u16(flag.validators.len())
+    rewrite i = 0
+    while i < flag.validators.len() {
+        rewrite res = res + emit_validator(ref flag.validators[i], ref pool)
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun emit_param(ref param: ParamDef, ref pool: string[]) -> string {
+    set res: string = hex_u16(string_index(ref pool, param.name))
+    rewrite res = res + hex_byte(type_to_code(param.type_name))
+    if param.is_variadic { rewrite res = res + hex_byte(1) } else { rewrite res = res + hex_byte(0) }
+    if param.has_default { rewrite res = res + hex_byte(1) } else { rewrite res = res + hex_byte(0) }
+    if param.is_nullable { rewrite res = res + hex_byte(1) } else { rewrite res = res + hex_byte(0) }
+    rewrite res = res + hex_u16(param.slot_id)
+    rewrite res = res + hex_u16(string_index(ref pool, param.default_val))
+    rewrite res = res + hex_u16(string_index(ref pool, param.about))
+    rewrite res = res + hex_u16(param.validators.len())
+    set i: int64 = 0
+    while i < param.validators.len() {
+        rewrite res = res + emit_validator(ref param.validators[i], ref pool)
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun emit_group(ref grp: GroupDef, ref pool: string[]) -> string {
+    set res: string = hex_u16(string_index(ref pool, grp.name))
+    if grp.is_or { rewrite res = res + hex_byte(1) } else { rewrite res = res + hex_byte(2) }
+    if grp.is_optional { rewrite res = res + hex_byte(1) } else { rewrite res = res + hex_byte(0) }
+    rewrite res = res + hex_u16(string_index(ref pool, grp.about))
+    rewrite res = res + hex_u16(grp.flags.len())
+    set i: int64 = 0
+    while i < grp.flags.len() {
+        rewrite res = res + emit_flag(ref grp.flags[i], ref pool)
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun emit_command(ref cmd: CommandDef, ref pool: string[]) -> string {
+    set res: string = hex_u16(string_index(ref pool, cmd.name))
+    rewrite res = res + hex_u16(string_index(ref pool, cmd.about))
+    set mask: int64 = 0
+    if cmd.is_root { rewrite mask = mask | 1 }
+    if cmd.is_uncommon { rewrite mask = mask | 2 }
+    if cmd.is_config { rewrite mask = mask | 4 }
+    rewrite res = res + hex_byte(mask)
+    rewrite res = res + hex_u16(cmd.flags.len())
+    set i: int64 = 0
+    while i < cmd.flags.len() {
+        rewrite res = res + emit_flag(ref cmd.flags[i], ref pool)
+        rewrite i = i + 1
+    }
+    rewrite res = res + hex_u16(cmd.params.len())
+    rewrite i = 0
+    while i < cmd.params.len() {
+        rewrite res = res + emit_param(ref cmd.params[i], ref pool)
+        rewrite i = i + 1
+    }
+    rewrite res = res + hex_u16(cmd.groups.len())
+    rewrite i = 0
+    while i < cmd.groups.len() {
+        rewrite res = res + emit_group(ref cmd.groups[i], ref pool)
+        rewrite i = i + 1
+    }
+    rewrite res = res + hex_u16(cmd.subcommands.len())
+    rewrite i = 0
+    while i < cmd.subcommands.len() {
+        rewrite res = res + emit_command(ref cmd.subcommands[i], ref pool)
+        rewrite i = i + 1
+    }
+    return res
+}
+
+public fun compile_schema_hex(ref schema: ClaritySchema) -> string {
+    set pool: string[] = collect_all_strings(ref schema)
+    set res: string = "\\x43\\x4c\\x42\\x43"
+    rewrite res = res + hex_u16(2)
+    rewrite res = res + hex_u16(pool.len())
+    set i: int64 = 0
+    while i < pool.len() {
+        rewrite res = res + hex_str_bytes(pool[i])
+        rewrite i = i + 1
+    }
+    rewrite res = res + hex_u16(string_index(ref pool, schema.meta.app))
+    rewrite res = res + hex_u16(string_index(ref pool, schema.meta.version))
+    rewrite res = res + hex_u16(string_index(ref pool, schema.meta.author))
+    rewrite res = res + hex_u16(string_index(ref pool, schema.meta.about))
+    rewrite res = res + hex_u16(string_index(ref pool, schema.meta.config_path))
+    if schema.meta.default_flags { rewrite res = res + hex_byte(1) } else { rewrite res = res + hex_byte(0) }
+    rewrite res = res + hex_u16(schema.common_flags.len())
+    rewrite i = 0
+    while i < schema.common_flags.len() {
+        rewrite res = res + emit_flag(ref schema.common_flags[i], ref pool)
+        rewrite i = i + 1
+    }
+    if schema.root_command != null {
+        rewrite res = res + hex_byte(1)
+        set root: CommandDef = schema.root_command ?? init_command("", true)
+        rewrite res = res + emit_command(ref root, ref pool)
+    } else {
+        rewrite res = res + hex_byte(0)
+    }
+    rewrite res = res + hex_u16(schema.commands.len())
+    rewrite i = 0
+    while i < schema.commands.len() {
+        rewrite res = res + emit_command(ref schema.commands[i], ref pool)
+        rewrite i = i + 1
+    }
+    return res
+}
+
+public class ByteBuffer {
+    hex_data: string
+
+    public fun init(hex: string) { rewrite this.hex_data = hex }
+    public fun to_hex_escaped() -> string { return this.hex_data }
+}

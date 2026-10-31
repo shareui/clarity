@@ -1,0 +1,55 @@
+load std.io: println
+load macrosdk: MacroRunner, MacroContext, TokenStream, token_stream
+load std.fs: path_join, path_exists
+load std.fs.files: file_read_text, file_write_text
+load std.strings: trim
+load clarity_core: compile_schema_to_code, ClarityError
+
+fun main() {
+    set runner = init MacroRunner()
+    set _ = runner.register_attribute("clarity::scheme", expand_clarity_scheme)
+    set _ = runner.register_attribute("scheme", expand_clarity_scheme)
+    set _ = runner.run()
+}
+
+fun clean_path(raw: string) -> string {
+    set s: string = trim(raw)
+    if s.len() >= 2 && s[0..1] == "\"" && s[s.len() - 1..s.len()] == "\"" {
+        return s[1..s.len() - 1]
+    }
+    return s
+}
+
+fun expand_clarity_scheme(ref ctx: MacroContext, input: TokenStream) -> TokenStream {
+    set raw_path: string = ctx.attr_args
+    if raw_path.len() == 0 {
+        rewrite raw_path = input.to_string()
+    }
+    set schema_rel: string = clean_path(raw_path)
+    if schema_rel.len() == 0 {
+        ctx.error("clarity::scheme macro requires schema path argument")
+        return token_stream("")
+    }
+
+    set full_path: string = path_join(ctx.working_dir, schema_rel)
+    ctx.track_file(schema_rel)
+
+    if !path_exists(full_path) {
+        ctx.error("clarity schema file not found: ${full_path}")
+        return token_stream("")
+    }
+
+    set src: string = file_read_text(full_path)
+    set code: string = ""
+    sus {
+        rewrite code = compile_schema_to_code(src)
+    } catch e: ClarityError {
+        ctx.error("clarity schema error: " + e.message)
+        return token_stream("")
+    } catch {
+        ctx.error("clarity compilation error: " + errkind)
+        return token_stream("")
+    }
+
+    return token_stream(code)
+}

@@ -1,0 +1,126 @@
+load std.fs: path_join, path_exists, path_parent, dir_create_all, file_read_text, file_write_text, config_dir
+load std.toml: parse, pretty, toml_string, toml_int, toml_float, toml_bool, toml_array, toml_table, TomlValue
+
+public class Config {
+    path: string
+    doc: TomlValue
+
+    public fun init(file_path: string) {
+        rewrite this.path = file_path
+        if !path_exists(file_path) {
+            set parent: string = path_parent(file_path)
+            if parent.len() > 0 && !path_exists(parent) {
+                dir_create_all(parent)
+            }
+            file_write_text(file_path, "")
+            rewrite this.doc = toml_table()
+        } else {
+            set content: string = file_read_text(file_path)
+            set parsed: TomlValue = toml_table()
+            sus {
+                rewrite parsed = parse(content)
+            } catch {
+                println("error parsing config: " + errkind)
+                rewrite parsed = toml_table()
+            }
+            rewrite this.doc = parsed
+        }
+    }
+
+    public fun get_str(key: string, fallback: string) -> string {
+        set node: TomlValue = this.doc.get(key)
+        return node.as_string_or(fallback)
+    }
+
+    public fun get_int(key: string, fallback: int64) -> int64 {
+        set node: TomlValue = this.doc.get(key)
+        return node.as_int_or(fallback)
+    }
+
+    public fun get_float(key: string, fallback: float64) -> float64 {
+        set node: TomlValue = this.doc.get(key)
+        return node.as_float_or(fallback)
+    }
+
+    public fun get_bool(key: string, fallback: bool) -> bool {
+        set node: TomlValue = this.doc.get(key)
+        return node.as_bool_or(fallback)
+    }
+
+    public fun get_str_array(key: string) -> string[] {
+        set node: TomlValue = this.doc.get(key)
+        set arr: TomlValue[] = node.as_array()
+        set res: string[] = []
+        set i: int64 = 0
+        set count: int64 = arr.len()
+        while i < count {
+            res.push(arr[i].as_string())
+            rewrite i = i + 1
+        }
+        return res
+    }
+
+    public fun set_str(key: string, val: string) { this.doc.set(key, toml_string(val)) }
+    public fun set_int(key: string, val: int64) { this.doc.set(key, toml_int(val)) }
+    public fun set_float(key: string, val: float64) { this.doc.set(key, toml_float(val)) }
+    public fun set_bool(key: string, val: bool) { this.doc.set(key, toml_bool(val)) }
+
+    public fun set_str_array(key: string, vals: string[]) {
+        set arr: TomlValue[] = []
+        set i: int64 = 0
+        set count: int64 = vals.len()
+        while i < count {
+            arr.push(toml_string(vals[i]))
+            rewrite i = i + 1
+        }
+        this.doc.set(key, toml_array(arr))
+    }
+
+    public fun has(key: string) -> bool {
+        return this.doc.has(key)
+    }
+
+    public fun keys() -> string[] {
+        return this.doc.keys()
+    }
+
+    public fun remove(key: string) {
+        if !this.doc.has(key) {
+            return
+        }
+        set new_keys: string[] = []
+        set new_vals: TomlValue[] = []
+        set i: int64 = 0
+        set count: int64 = this.doc.obj_keys.len()
+        while i < count {
+            if this.doc.obj_keys[i] != key {
+                new_keys.push(this.doc.obj_keys[i])
+                new_vals.push(this.doc.obj_vals[i])
+            }
+            rewrite i = i + 1
+        }
+        rewrite this.doc.obj_keys = new_keys
+        rewrite this.doc.obj_vals = new_vals
+    }
+
+    public fun to_string() -> string {
+        return pretty(this.doc)
+    }
+
+    public fun save() -> bool {
+        set text: string = this.to_string()
+        return file_write_text(this.path, text)
+    }
+}
+
+public fun config_open(app_name: string) -> Config {
+    set base_dir: string = config_dir()
+    set app_dir: string = path_join(base_dir, "clarity-cli")
+    set full_dir: string = path_join(app_dir, app_name)
+    set file_path: string = path_join(full_dir, "config.toml")
+    return init Config(file_path)
+}
+
+public fun config_open_file(file_path: string) -> Config {
+    return init Config(file_path)
+}

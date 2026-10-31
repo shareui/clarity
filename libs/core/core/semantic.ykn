@@ -1,0 +1,84 @@
+load .ast: ClaritySchema, CommandDef, FlagDef, ParamDef, init_command
+load .errors: clarity_error
+
+public class SemanticValidator {
+    public fun init() {}
+
+    fun validate_params(ref params: ParamDef[], cmd_name: string) {
+        set i: int64 = 0
+        set count: int64 = params.len()
+        while i < count {
+            set p: ParamDef = params[i]
+            if p.is_variadic && i != count - 1 {
+                panic(clarity_error("variadic param '${p.name}' must be the last positional parameter in command '${cmd_name}'", 103))
+            }
+            rewrite i = i + 1
+        }
+    }
+
+    fun validate_flags(
+        ref cmd_flags: FlagDef[],
+        is_uncommon: bool,
+        ref common_flags: FlagDef[],
+        cmd_name: string
+    ) // validate_flags end
+
+    { // validate_flags start
+        set all_flags: FlagDef[] = []
+        set i: int64 = 0
+        if !is_uncommon {
+            set common_count: int64 = common_flags.len()
+            while i < common_count {
+                all_flags.push(common_flags[i])
+                rewrite i = i + 1
+            }
+        }
+        rewrite i = 0
+        set cmd_count: int64 = cmd_flags.len()
+        while i < cmd_count {
+            all_flags.push(cmd_flags[i])
+            rewrite i = i + 1
+        }
+
+        rewrite i = 0
+        set all_len: int64 = all_flags.len()
+        while i < all_len {
+            set j: int64 = i + 1
+            while j < all_len {
+                if all_flags[i].long_name == all_flags[j].long_name {
+                    panic(clarity_error("duplicate flag '--${all_flags[i].long_name}' in command '${cmd_name}'", 104))
+                }
+                rewrite j = j + 1
+            }
+            rewrite i = i + 1
+        }
+    }
+
+    fun validate_command(ref cmd: CommandDef, ref common_flags: FlagDef[]) {
+        this.validate_params(ref cmd.params, cmd.name)
+        this.validate_flags(ref cmd.flags, cmd.is_uncommon, ref common_flags, cmd.name)
+
+        set i: int64 = 0
+        set sub_count: int64 = cmd.subcommands.len()
+        while i < sub_count {
+            this.validate_command(ref cmd.subcommands[i], ref common_flags)
+            rewrite i = i + 1
+        }
+    }
+
+    public fun validate(ref schema: ClaritySchema) {
+        if schema.meta.app.len() == 0 {
+            panic(clarity_error("app name must be declared in header", 105))
+        }
+        if schema.root_command != null {
+            set root: CommandDef = schema.root_command ?? init_command("", true)
+            this.validate_command(ref root, ref schema.common_flags)
+        }
+        set i: int64 = 0
+        set cmd_count: int64 = schema.commands.len()
+        while i < cmd_count {
+            this.validate_command(ref schema.commands[i], ref schema.common_flags)
+            rewrite i = i + 1
+        }
+    }
+}
