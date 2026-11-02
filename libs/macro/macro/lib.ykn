@@ -1,9 +1,11 @@
 load std.io: println
 load macrosdk: MacroRunner, MacroContext, TokenStream, token_stream
 load std.fs: path_join, path_exists
-load std.fs.files: file_read_text, file_write_text
+load std.fs.paths: path_file_stem
+load std.fs.dirs: create_dir_all
+load std.fs.files: file_read_text
 load std.strings: trim
-load clarity_core: compile_schema_to_code, ClarityError
+load clarity_core: compile_schema_to_code_file, ClarityError, format_clarity_error
 
 fun main() {
     set runner = init MacroRunner()
@@ -32,6 +34,9 @@ fun expand_clarity_scheme(ref ctx: MacroContext, input: TokenStream) -> TokenStr
     }
 
     set full_path: string = path_join(ctx.working_dir, schema_rel)
+    if !path_exists(full_path) && path_exists(path_join(path_join(ctx.working_dir, "src"), schema_rel)) {
+        rewrite full_path = path_join(path_join(ctx.working_dir, "src"), schema_rel)
+    }
     ctx.track_file(schema_rel)
 
     if !path_exists(full_path) {
@@ -39,16 +44,27 @@ fun expand_clarity_scheme(ref ctx: MacroContext, input: TokenStream) -> TokenStr
         return token_stream("")
     }
 
+    set stem: string = path_file_stem(schema_rel)
+    if stem.len() == 0 {
+        rewrite stem = "bytes"
+    }
+    set rel_include_path: string = "yuki-work/local/clarity/${stem}.clarity"
+    set out_dir: string = path_join(path_join(path_join(ctx.working_dir, "yuki-work"), "local"), "clarity")
+    set _ = create_dir_all(out_dir)
+    set full_bin_path: string = path_join(out_dir, "${stem}.clarity")
+
     set src: string = file_read_text(full_path)
     set code: string = ""
     sus {
-        rewrite code = compile_schema_to_code(src)
+        rewrite code = compile_schema_to_code_file(src, full_bin_path, rel_include_path)
     } catch e: ClarityError {
-        ctx.error("clarity schema error: " + e.message)
-        return token_stream("")
+        set err_formatted: string = format_clarity_error(e)
+        ctx.error(err_formatted)
+        return token_stream("compile_error!(\"${err_formatted}\")\n")
     } catch {
-        ctx.error("clarity compilation error: " + errkind)
-        return token_stream("")
+        set err_formatted: string = "clarity scheme error[0|0]: ${errkind}"
+        ctx.error(err_formatted)
+        return token_stream("compile_error!(\"${err_formatted}\")\n")
     }
 
     return token_stream(code)

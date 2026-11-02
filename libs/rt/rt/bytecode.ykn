@@ -1,4 +1,28 @@
 load .errors: clarity_rt_error
+load std.encore: from_utf8_lossy
+
+fun hex_nibble(c: uint8) -> int64 {
+    if c >= 48 && c <= 57 { return cast(c - 48, "int64") }
+    if c >= 97 && c <= 102 { return cast(c - 97 + 10, "int64") }
+    if c >= 65 && c <= 70 { return cast(c - 65 + 10, "int64") }
+    return 0
+}
+
+public fun hex_to_bytes(hex: string) -> bytes {
+    set hlen: int64 = hex.len()
+    set raw: uint8[] = []
+    set i: int64 = 0
+    while i < hlen {
+        set h1: int64 = hex_nibble(hex[i])
+        set h2: int64 = hex_nibble(hex[i + 1])
+        raw.push(cast((h1 << 4) | h2, "uint8"))
+        rewrite i = i + 2
+    }
+    if raw.len() == 0 {
+        return cast("", "bytes")
+    }
+    return from_raw_parts(raw.as_ptr(), raw.len(), raw.len())
+}
 
 public struct RtValidator {
     kind: uint8
@@ -119,7 +143,8 @@ public class BytecodeReader {
             set slen: int64 = this.read_u16()
             set start: int64 = this.pos
             rewrite this.pos = this.pos + slen
-            set s: string = cast(this.data[start..this.pos], "string")
+            set raw: bytes = this.data[start..this.pos]
+            set s: string = from_utf8_lossy(ref raw)
             this.pool.push(s)
             rewrite i = i + 1
         }

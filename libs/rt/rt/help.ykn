@@ -1,10 +1,13 @@
 load std.outf: style
+load std.encore: count_graphemes
 load .bytecode: RtSchema, RtCommand, RtFlag, RtParam
 
 fun pad_right(s: string, total_len: int64) -> string {
     set res: string = s
-    while res.len() < total_len {
+    set cur_len: int64 = count_graphemes(s)
+    while cur_len < total_len {
         rewrite res = res + " "
+        rewrite cur_len = cur_len + 1
     }
     return res
 }

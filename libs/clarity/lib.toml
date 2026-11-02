@@ -17,7 +17,8 @@ tests_dir = "tests"
 default = []
 
 [libs.runtime]
-clarity_rt = { path = "../rt" }
+clarity_rt = { path = "../rt", reexport = true, splitnames = true }
+scheme = { path = "../macro", reexport = true, splitnames = true }
 # example = { link = "https://.../lib.tar.zst" }
 
 [libs.build]

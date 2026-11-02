@@ -11,8 +11,6 @@ default = []
 
 [libs.runtime]
 clarity = { path = "../../libs/clarity" }
-clarity_rt = { path = "../../libs/rt" }
-scheme = { path = "../../libs/macro" }
 
 [libs.build]
 

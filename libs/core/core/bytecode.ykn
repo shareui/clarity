@@ -1,5 +1,6 @@
 load .ast: ClaritySchema, CommandDef, FlagDef, ParamDef, GroupDef, ValidatorDef
 load .ast: init_command
+load std.fs.files: file_open_write, File
 
 fun hex_digit(n: int64) -> string {
     set v: int64 = n & 15
@@ -15,7 +16,7 @@ fun hex_digit(n: int64) -> string {
 fun hex_byte(b: int64) -> string {
     set h1: string = hex_digit(b >> 4)
     set h2: string = hex_digit(b)
-    return "\\x${h1}${h2}"
+    return "${h1}${h2}"
 }
 
 fun hex_u16(v: int64) -> string {
@@ -355,7 +356,7 @@ fun emit_command(ref cmd: CommandDef, ref pool: string[]) -> string {
 
 public fun compile_schema_hex(ref schema: ClaritySchema) -> string {
     set pool: string[] = collect_all_strings(ref schema)
-    set res: string = "\\x43\\x4c\\x42\\x43"
+    set res: string = "434c4243"
     rewrite res = res + hex_u16(2)
     rewrite res = res + hex_u16(pool.len())
     set i: int64 = 0
@@ -396,4 +397,29 @@ public class ByteBuffer {
 
     public fun init(hex: string) { rewrite this.hex_data = hex }
     public fun to_hex_escaped() -> string { return this.hex_data }
+}
+
+fun hex_nibble(c: uint8) -> int64 {
+    if c >= 48u8 && c <= 57u8 { return cast(c - 48u8, "int64") }
+    if c >= 97u8 && c <= 102u8 { return cast(c - 97u8 + 10u8, "int64") }
+    if c >= 65u8 && c <= 70u8 { return cast(c - 65u8 + 10u8, "int64") }
+    return 0
+}
+
+public fun write_bytecode_bin(file_path: string, hex: string) -> bool {
+    set hlen: int64 = hex.len()
+    set raw: uint8[] = []
+    set i: int64 = 0
+    while i < hlen {
+        set h1: int64 = hex_nibble(hex[i])
+        set h2: int64 = hex_nibble(hex[i + 1])
+        raw.push(cast((h1 << 4) | h2, "uint8"))
+        rewrite i = i + 2
+    }
+    set f: File = file_open_write(file_path)
+    if raw.len() > 0 {
+        set _ = f.write(raw.as_ptr(), raw.len())
+    }
+    set _ = f.close()
+    return true
 }

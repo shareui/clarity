@@ -10,7 +10,7 @@ public class SemanticValidator {
         while i < count {
             set p: ParamDef = params[i]
             if p.is_variadic && i != count - 1 {
-                panic(clarity_error("variadic param '${p.name}' must be the last positional parameter in command '${cmd_name}'", 103))
+                panic(clarity_error("variadic param '${p.name}' must be the last positional parameter in command '${cmd_name}'", 103, "semantic", 0, 0))
             }
             rewrite i = i + 1
         }
@@ -46,7 +46,7 @@ public class SemanticValidator {
             set j: int64 = i + 1
             while j < all_len {
                 if all_flags[i].long_name == all_flags[j].long_name {
-                    panic(clarity_error("duplicate flag '--${all_flags[i].long_name}' in command '${cmd_name}'", 104))
+                    panic(clarity_error("duplicate flag '--${all_flags[i].long_name}' in command '${cmd_name}'", 104, "semantic", 0, 0))
                 }
                 rewrite j = j + 1
             }
@@ -68,7 +68,7 @@ public class SemanticValidator {
 
     public fun validate(ref schema: ClaritySchema) {
         if schema.meta.app.len() == 0 {
-            panic(clarity_error("app name must be declared in header", 105))
+            panic(clarity_error("app name must be declared in header", 105, "semantic", 1, 1))
         }
         if schema.root_command != null {
             set root: CommandDef = schema.root_command ?? init_command("", true)

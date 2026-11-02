@@ -27,12 +27,8 @@ Add `clarity` to your project manifest under the `[libs.runtime]` section in `yu
 
 ```toml
 [libs.runtime]
-clarity = { git = "https://github.com/shareui/clarity", tag = "0.1.0", path = "libs/clarity" }
-clarity_rt = { git = "https://github.com/shareui/clarity", tag = "0.1.0", path = "libs/rt" }
-scheme = { git = "https://github.com/shareui/clarity", tag = "0.1.0", path = "libs/macro" }
+clarity = { git = "https://github.com/shareui/clarity", tag = "0.1.0", package = "clarity" }
 ```
-
-> `clarity` provides the unified public API, `clarity_rt` contains the runtime parsing engine, and `scheme` provides the compile-time procedural macro attribute `#[clarity::scheme]`.
 
 ---
 

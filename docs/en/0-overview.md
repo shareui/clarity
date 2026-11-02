@@ -42,15 +42,8 @@ Add `clarity` to your project manifest under the `[libs.runtime]` section in `yu
 
 ```toml
 [libs.runtime]
-clarity = { git = "https://github.com/shareui/clarity", tag = "0.1.0", path = "libs/clarity" }
-clarity_rt = { git = "https://github.com/shareui/clarity", tag = "0.1.0", path = "libs/rt" }
-scheme = { git = "https://github.com/shareui/clarity", tag = "0.1.0", path = "libs/macro" }
+clarity = { git = "https://github.com/shareui/clarity", tag = "0.1.0", package = "clarity" }
 ```
-
-Library components:
-- `clarity`: The unified public library facade exporting types and functions.
-- `clarity_rt`: The runtime virtual machine and parsing engine.
-- `scheme`: The compile-time procedural macro attribute `#[clarity::scheme]`.
 
 ### Importing in Application Code
 

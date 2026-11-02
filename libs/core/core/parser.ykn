@@ -31,13 +31,9 @@ public class Parser {
 
     fun expect_token(expected_kind: string) -> Token {
         if this.curr.kind != expected_kind {
-
-            set msg: string = 
-            "expected '${expected_kind}', got '${this.curr.kind}' ('${this.curr.value}') at line ${this.curr.line}:${this.curr.col}"
-
-            panic(clarity_error(msg, 102))
+            set msg: string = "expected '${expected_kind}', got '${this.curr.kind}' ('${this.curr.value}')"
+            panic(clarity_error(msg, 102, "syntax", this.curr.line, this.curr.col))
         }
-        
         set tok: Token = this.curr
         this.advance()
         return tok
@@ -127,9 +123,7 @@ public class Parser {
             this.advance()
         }
 
-        if this.curr.kind == ":" {
-            this.advance()
-        }
+        set _colon: Token = this.expect_token(":")
 
         set type_name: string = ""
         set enum_variants: string[] = []
@@ -217,9 +211,7 @@ public class Parser {
                 break
             }
         }
-        if this.curr.kind == ";" {
-            this.advance()
-        }
+        set _sc: Token = this.expect_token(";")
 
         return FlagDef {
             long_name: long_name,
@@ -246,9 +238,7 @@ public class Parser {
         }
         set name: string = this.curr.value
         this.advance()
-        if this.curr.kind == ":" {
-            this.advance()
-        }
+        set _colon: Token = this.expect_token(":")
         set type_name: string = this.curr.value
         this.advance()
         set is_nullable: bool = false
@@ -279,9 +269,7 @@ public class Parser {
             rewrite about = this.curr.value
             this.advance()
         }
-        if this.curr.kind == ";" {
-            this.advance()
-        }
+        set _sc: Token = this.expect_token(";")
         
         return ParamDef {
             name: name,
@@ -368,9 +356,7 @@ public class Parser {
         set groups: GroupDef[] = []
         set subcommands: CommandDef[] = []
 
-        if this.curr.kind == "{" {
-            this.advance()
-        }
+        set _open_brace: Token = this.expect_token("{")
 
         while this.curr.kind != "}" && this.curr.kind != "eof" { // `
             if this.curr.kind == "flag_long" {
@@ -385,13 +371,13 @@ public class Parser {
             } elif this.curr.kind == "ident" && (this.curr.value == "define" || this.curr.value == "uncommon" || this.curr.value == "config") {
                 set sub: CommandDef = this.parse_command()
                 subcommands.push(sub)
-            } 
-
-            else { this.advance() }
-
+            } else {
+                set msg: string = "unexpected token '${this.curr.value}' in command definition"
+                panic(clarity_error(msg, 102, "syntax", this.curr.line, this.curr.col))
+            }
         } // `
         
-        if this.curr.kind == "}" { this.advance() }
+        set _close_brace: Token = this.expect_token("}")
 
         return CommandDef {
             name: name,
@@ -417,7 +403,8 @@ public class Parser {
                 set f: FlagDef = this.parse_flag()
                 flags.push(f)
             } else {
-                this.advance()
+                set msg: string = "unexpected token '${this.curr.value}' at top level"
+                panic(clarity_error(msg, 102, "syntax", this.curr.line, this.curr.col))
             }
         }
 
@@ -536,7 +523,8 @@ public class Parser {
                 set cmd: CommandDef = this.parse_command()
                 if cmd.is_root { rewrite root_command = cmd } else { commands.push(cmd) }
             } else {
-                this.advance()
+                set msg: string = "unexpected token '${this.curr.value}' at top level"
+                panic(clarity_error(msg, 102, "syntax", this.curr.line, this.curr.col))
             }
         }
 

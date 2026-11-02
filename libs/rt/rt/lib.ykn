@@ -1,5 +1,5 @@
 public load .errors: ClarityRuntimeError, clarity_rt_error
-public load .bytecode: BytecodeReader, RtSchema, RtCommand, RtFlag, RtParam, RtGroup, RtValidator
+public load .bytecode: BytecodeReader, RtSchema, RtCommand, RtFlag, RtParam, RtGroup, RtValidator, hex_to_bytes
 public load .validators: validate_range_int, validate_pattern, validate_exists, validate_parent_exists, validate_min_len, validate_max_len, validate_one_of
 public load .help: render_command_help, render_app_help, render_version
 public load .suggest: levenshtein, find_suggestion, print_error_unknown_subcommand, print_error_unexpected_arg, print_error_missing_param, print_error_missing_flag, print_error_missing_value, print_error_conflict, print_error_requires

@@ -8,23 +8,44 @@ name = "clarity"
 version = "0.1.0"
 kind = "static"
 source = "path+../../libs/clarity"
-checksum = "blake3:814d1a64159fb8b457a5ee6fd25a4691c9770dfbd929d1a618029ffba6668729"
+checksum = "blake3:bd3e3fcf0c7d1b6c076b017bb7b3a17b09fa85fcc58f7bbeb2da65f312a36de4"
 features = ["default"]
+
+[[package]]
+name = "clarity_clarity_rt"
+version = "0.1.0"
+kind = "static"
+source = "path+/home/shareui/dev/yuki-lang/source/offlibs/clarity/apps/test_app/../../libs/clarity/../rt"
+checksum = "blake3:3cabc3528a3792e026fd5ca67866ba2d102c29c8b49db2828dc18a10777b6e61"
 
 [[package]]
 name = "clarity_rt"
 version = "0.1.0"
 kind = "static"
 source = "path+../../libs/rt"
-checksum = "blake3:f4e9b28234efb9a0c08f9270edab8aabe54b29f2d814d9319fe4970c2f9b9559"
+checksum = "blake3:4a7328496362824d19ebb6ad8bccf7f17ce11e5b183b57dcb1f9b2435946aa73"
 features = ["default"]
+
+[[package]]
+name = "clarity_scheme"
+version = "0.1.0"
+kind = "macro"
+source = "path+/home/shareui/dev/yuki-lang/source/offlibs/clarity/apps/test_app/../../libs/clarity/../macro"
+checksum = "blake3:1890befa486edb36b97589b8be42336f4465f1aea83aa3fe4ebd181fb373a411"
+
+[[package]]
+name = "clarity_scheme_clarity_core"
+version = "0.1.0"
+kind = "static"
+source = "path+/home/shareui/dev/yuki-lang/source/offlibs/clarity/apps/test_app/../../libs/clarity/../macro/../core"
+checksum = "blake3:ebbd1ada2f29982a2745aebb94b8f36e8bcfac1aca376717d48a14bb4c18b5bb"
 
 [[package]]
 name = "scheme"
 version = "0.1.0"
 kind = "macro"
 source = "path+../../libs/macro"
-checksum = "blake3:058d8b3b0de6e6bcfee2da011d1e87ae821951c3a37d1809d6fbca6de2b383f4"
+checksum = "blake3:6d5f26bf26e3bd973ad74e095a5ad936a3522b076e66e8d60b3015a3b7b9de24"
 features = ["default"]
 
 [[package]]
@@ -32,10 +53,6 @@ name = "test_app"
 version = "0.1.0"
 kind = "app"
 source = "root"
-checksum = "blake3:949f577aba094f6dcc05e09e0557dd69e0b18241587f9a564516dc402242142e"
+checksum = "blake3:586213addfe00020e8b728c5bd29eaae87ecad296d94bc29d4d8a32382b5aeb0"
 features = ["default"]
-dependencies = [
-    "clarity",
-    "clarity_rt",
-    "scheme",
-]
+dependencies = ["clarity"]

@@ -38,19 +38,12 @@ mygit commit -m "первый коммит" --verbose src/main.ykn
 
 ## 2. Подключение: load clarity
 
-Чтобы подключить библиотеку `clarity` к проекту, добавьте зависимости в секцию `[libs.runtime]` манифеста `yuki.toml`:
+Чтобы подключить библиотеку `clarity` к проекту, добавьте зависимость в секцию `[libs.runtime]` манифеста `yuki.toml`:
 
 ```toml
 [libs.runtime]
-clarity = { git = "https://github.com/shareui/clarity", tag = "0.1.0", path = "libs/clarity" }
-clarity_rt = { git = "https://github.com/shareui/clarity", tag = "0.1.0", path = "libs/rt" }
-scheme = { git = "https://github.com/shareui/clarity", tag = "0.1.0", path = "libs/macro" }
+clarity = { git = "https://github.com/shareui/clarity", tag = "0.1.0", package = "clarity" }
 ```
-
-Назначение компонентов:
-- `clarity` — публичный фасад библиотеки с импортом всех основных функций и типов.
-- `clarity_rt` — виртуальная машина и рантайм-движок синтаксического анализа.
-- `scheme` — процедурный макрос компилятора `#[clarity::scheme]`, выполняющий кодогенерацию на этапе сборки.
 
 ### Импорт в коде программы
 
