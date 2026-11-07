@@ -1,3 +1,4 @@
+load core.utils: cast
 load .ast: ClaritySchema, CommandDef, FlagDef, ParamDef, GroupDef, ValidatorDef
 load .ast: init_command
 load std.fs.files: file_open_write, File

@@ -1,3 +1,5 @@
+load core.process: exit
+load core.utils: cast
 load std.io: println, flush
 load std.env: get_env
 load std.strings: index_of

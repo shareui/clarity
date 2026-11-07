@@ -1,3 +1,4 @@
+load core.panic: panic
 load .ast: ClaritySchema, CommandDef, FlagDef, ParamDef, init_command
 load .errors: clarity_error
 

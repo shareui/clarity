@@ -8,7 +8,7 @@ name = "clarity_core"
 version = "0.1.0"
 kind = "static"
 source = "path+../core"
-checksum = "blake3:59e42f5af272ed1ae8c7ae3de76859f36ec8aac13fc6202d47dbd1ab69512b56"
+checksum = "blake3:e95c3bfac17502878e1f0c1363166fd981a385d3809b580fc979ae4bfeb646c3"
 features = ["default"]
 
 [[package]]
@@ -16,6 +16,6 @@ name = "scheme"
 version = "0.1.0"
 kind = "macro"
 source = "root"
-checksum = "blake3:8ae680887d136aebc34fb4cf072d920338eba1724a7040a4a9c065c06296a490"
+checksum = "blake3:58a79e4ce0e163ff72302165572f8f3fcb6f76b1f05b45ef480fcd3d4b1445b9"
 features = ["default"]
 dependencies = ["clarity_core"]

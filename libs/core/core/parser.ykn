@@ -1,3 +1,5 @@
+load core.panic: panic
+load core.utils: cast
 load .ast: AppMeta, ValidatorDef, FlagDef, ParamDef, GroupDef, CommandDef, ClaritySchema
 load .ast: init_app_meta, init_validator
 load .lexer: Lexer, Token

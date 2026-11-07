@@ -1,0 +1,27 @@
+version = 1
+target = "x86_64-unknown-linux-gnu"
+compiler = "0.1.0"
+profile = "debug"
+
+[[package]]
+name = "clarity_rt"
+version = "0.1.0"
+kind = "static"
+source = "path+../rt"
+checksum = "blake3:7bd2936b3a1d0605e966d5f461fe07b52efd56aedbb58c307d4113b8f78994f9"
+features = ["default"]
+
+[[package]]
+name = "scheme"
+version = "0.1.0"
+kind = "macro"
+source = "path+../macro"
+checksum = "blake3:acb30a93742e3d48e0e5355fbd882418a17e73600d456b5a27cc373eb80bfc04"
+features = ["default"]
+
+[[package]]
+name = "scheme_clarity_core"
+version = "0.1.0"
+kind = "static"
+source = "path+/home/shareui/dev/yuki-lang/source/offlibs/clarity/libs/clarity/../macro/../core"
+checksum = "blake3:7a3d67a7ef7ed04f77040ee2c074ebc3b3fc2ac861bde964aebd217f8c96b746"

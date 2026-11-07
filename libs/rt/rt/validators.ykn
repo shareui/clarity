@@ -1,3 +1,4 @@
+load core.panic: panic
 load std.regex: is_match
 load std.fs: path_exists, path_parent
 load .errors: clarity_rt_error

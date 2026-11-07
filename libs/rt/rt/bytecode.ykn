@@ -1,3 +1,6 @@
+load core.mem: from_raw_parts
+load core.panic: panic
+load core.utils: cast
 load .errors: clarity_rt_error
 load std.encore: from_utf8_lossy
 

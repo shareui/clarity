@@ -1,3 +1,5 @@
+load core.process: args
+load core.utils: cast
 load .ast: ClaritySchema, CommandDef, FlagDef, ParamDef, init_command
 load .bytecode: ByteBuffer
 load std.strings: upper

@@ -4,7 +4,7 @@ version = "0.1.0"
 entry = "macro/lib.ykn"
 yukino = ["0.1.0", "+"] # [min, max]
 output = "macro"
-includes = ["stdlib", "macrosdk"]
+includes = ["core", "stdlib", "macrosdk"]
 
 [test]
 threads = "auto"

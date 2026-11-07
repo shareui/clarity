@@ -1,3 +1,4 @@
+load core.panic: panic
 load .errors: clarity_error
 
 public struct Token {

@@ -1,3 +1,4 @@
+load core.process: exit
 load std.outf: style
 load std.io: println, flush
 

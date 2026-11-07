@@ -4,7 +4,7 @@ version = "0.1.0"
 entry = "clarity/lib.ykn"
 yukino = ["0.1.0", "+"] # [min, max]
 output = "static"
-includes = ["stdlib"]
+includes = ["core", "stdlib"]
 
 [test]
 threads = "auto"
