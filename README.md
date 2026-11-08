@@ -27,7 +27,7 @@ Add `clarity` to your project manifest under the `[libs.runtime]` section in `yu
 
 ```toml
 [libs.runtime]
-clarity = { git = "https://github.com/shareui/clarity", tag = "0.1.0", package = "clarity" }
+clarity = { git = "https://github.com/shareui/clarity", tag = "0.1.1", package = "clarity" }
 ```
 
 ---

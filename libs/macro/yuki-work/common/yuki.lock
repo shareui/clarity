@@ -5,17 +5,17 @@ profile = "debug"
 
 [[package]]
 name = "clarity_core"
-version = "0.1.0"
+version = "0.1.1"
 kind = "static"
 source = "path+../core"
-checksum = "blake3:e95c3bfac17502878e1f0c1363166fd981a385d3809b580fc979ae4bfeb646c3"
+checksum = "blake3:b7b06c4b122d3a67c6aaf83fc0b221afc14f86ba96ed4047efb6e1d548c424ac"
 features = ["default"]
 
 [[package]]
 name = "scheme"
-version = "0.1.0"
+version = "0.1.1"
 kind = "macro"
 source = "root"
-checksum = "blake3:58a79e4ce0e163ff72302165572f8f3fcb6f76b1f05b45ef480fcd3d4b1445b9"
+checksum = "blake3:ace7df024a1fc251df4b25536f85ceb2067d2f86dc4a9763e427f73b62078ceb"
 features = ["default"]
 dependencies = ["clarity_core"]

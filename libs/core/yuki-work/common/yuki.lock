@@ -2,4 +2,11 @@ version = 1
 target = "x86_64-unknown-linux-gnu"
 compiler = "0.1.0"
 profile = "debug"
-package = []
+
+[[package]]
+name = "clarity_core"
+version = "0.1.1"
+kind = "static"
+source = "root"
+checksum = "blake3:e341793abfb6c18d7b6f83cbcc4d1a1edfcc3f9e9f1c743076060699ac109ac0"
+features = ["default"]

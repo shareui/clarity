@@ -4,24 +4,36 @@ compiler = "0.1.0"
 profile = "debug"
 
 [[package]]
+name = "clarity"
+version = "0.1.1"
+kind = "static"
+source = "root"
+checksum = "blake3:1c809384b012610e1a4065ea57d5dad1b77a7cda0ea16cb1c121d3de22596907"
+features = ["default"]
+dependencies = [
+    "scheme",
+    "clarity_rt",
+]
+
+[[package]]
 name = "clarity_rt"
-version = "0.1.0"
+version = "0.1.1"
 kind = "static"
 source = "path+../rt"
-checksum = "blake3:7bd2936b3a1d0605e966d5f461fe07b52efd56aedbb58c307d4113b8f78994f9"
+checksum = "blake3:80f780597969f353680d994b1fe504ce59aa187afb9dc77471a2d1f77c71b97e"
 features = ["default"]
 
 [[package]]
 name = "scheme"
-version = "0.1.0"
+version = "0.1.1"
 kind = "macro"
 source = "path+../macro"
-checksum = "blake3:acb30a93742e3d48e0e5355fbd882418a17e73600d456b5a27cc373eb80bfc04"
+checksum = "blake3:a4c592439f6cf73b3b319bdab8baad1ed14812c0bac5a77a8dae813e0b638cf4"
 features = ["default"]
 
 [[package]]
 name = "scheme_clarity_core"
-version = "0.1.0"
+version = "0.1.1"
 kind = "static"
 source = "path+/home/shareui/dev/yuki-lang/source/offlibs/clarity/libs/clarity/../macro/../core"
-checksum = "blake3:7a3d67a7ef7ed04f77040ee2c074ebc3b3fc2ac861bde964aebd217f8c96b746"
+checksum = "blake3:ea25cae9361f882e40b37c41a1bf9d947def340f04d18a57fc37d5eb5f05b6d0"

@@ -1,6 +1,6 @@
 [lib]
 name = "scheme"
-version = "0.1.0"
+version = "0.1.1"
 entry = "macro/lib.ykn"
 yukino = ["0.1.0", "+"] # [min, max]
 output = "macro"

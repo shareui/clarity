@@ -42,7 +42,7 @@ mygit commit -m "первый коммит" --verbose src/main.ykn
 
 ```toml
 [libs.runtime]
-clarity = { git = "https://github.com/shareui/clarity", tag = "0.1.0", package = "clarity" }
+clarity = { git = "https://github.com/shareui/clarity", tag = "0.1.1", package = "clarity" }
 ```
 
 ### Импорт в коде программы

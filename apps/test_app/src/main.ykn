@@ -1,6 +1,6 @@
-load core.utils: cast
 load std.io: println
 load clarity: *
+load core
 
 #[clarity::scheme("cli.cty")]
 fun clarity_init() { space }
